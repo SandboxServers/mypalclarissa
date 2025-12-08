@@ -1,0 +1,51 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.venv/
+venv/
+ENV/
+poetry.lock
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Database (will be volume mounted)
+*.db
+*.db.bak
+mem0_data/
+
+# Frontend (built separately)
+frontend/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Profile flag
+.profile_loaded
+
+# Docs
+README.md

@@ -1,0 +1,82 @@
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: clara-backend
+    ports:
+      - "8000:8000"
+    environment:
+      # LLM Provider
+      - LLM_PROVIDER=${LLM_PROVIDER:-nanogpt}
+      # OpenRouter
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2-0905}
+      - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
+      - OPENROUTER_TITLE=${OPENROUTER_TITLE:-Clara Assistant}
+      # NanoGPT
+      - NANOGPT_API_KEY=${NANOGPT_API_KEY}
+      - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
+      - NANOGPT_MEM0_MODEL=${NANOGPT_MEM0_MODEL:-openai/gpt-oss-120b}
+      # OpenAI (for embeddings)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # User config
+      - USER_ID=${USER_ID:-demo-user}
+      - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
+    volumes:
+      - clara-db:/app
+      - clara-mem0:/app/mem0_data
+      - ./user_profile.txt:/app/user_profile.txt:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/projects"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # Client-side URL (browser access) - set to your external IP/domain
+        - NEXT_PUBLIC_BACKEND_URL=${NEXT_PUBLIC_BACKEND_URL:-http://localhost:8000}
+    container_name: clara-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      # LLM Provider
+      - LLM_PROVIDER=${LLM_PROVIDER:-nanogpt}
+      # OpenRouter
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-moonshotai/kimi-k2-0905}
+      - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
+      - OPENROUTER_TITLE=${OPENROUTER_TITLE:-Clara Assistant}
+      # NanoGPT
+      - NANOGPT_API_KEY=${NANOGPT_API_KEY}
+      - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
+      # Backend URL (server-side, internal Docker network)
+      - BACKEND_URL=http://backend:8000
+      # OpenAI (for embeddings)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  clara-db:
+  clara-mem0:
+
+networks:
+  default:
+    name: clara-network
