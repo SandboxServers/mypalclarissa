@@ -17,7 +17,8 @@ BUFFER_MESSAGE_COUNT = 20
 # Paths for initial profile loading
 BASE_DIR = Path(__file__).parent
 USER_PROFILE_PATH = BASE_DIR / "user_profile.txt"
-PROFILE_LOADED_FLAG = BASE_DIR / "mem0_data" / ".profile_loaded"
+# Store flag OUTSIDE mem0_data since Qdrant may clean that directory
+PROFILE_LOADED_FLAG = BASE_DIR / ".profile_loaded"
 
 
 def load_initial_profile(user_id: str) -> None:
@@ -26,20 +27,33 @@ def load_initial_profile(user_id: str) -> None:
         print("[mem0] Skipping profile load - mem0 not available")
         return
 
+    print(f"[mem0] Checking for profile flag at: {PROFILE_LOADED_FLAG}")
+
     if PROFILE_LOADED_FLAG.exists():
+        print("[mem0] Profile already loaded (flag exists), skipping")
         return
+
+    # Create flag file FIRST to prevent duplicate loads even if we crash
+    print("[mem0] Creating flag file to prevent duplicate loads...")
+    try:
+        PROFILE_LOADED_FLAG.write_text(f"loading started at {datetime.now().isoformat()}")
+        print(f"[mem0] Flag file created at: {PROFILE_LOADED_FLAG}")
+    except Exception as e:
+        print(f"[mem0] ERROR: Could not create flag file: {e}")
+        # Continue anyway - we'll just reload next time
 
     if not USER_PROFILE_PATH.exists():
         print("[mem0] No user_profile.txt found, skipping initial load")
         return
 
+    print("[mem0] Loading initial user profile...")
     try:
         profile_text = USER_PROFILE_PATH.read_text()
         # Break into paragraphs and add each as a separate conversation
         paragraphs = [p.strip() for p in profile_text.split("\n\n") if p.strip()]
         total_memories = 0
 
-        for para in paragraphs:
+        for i, para in enumerate(paragraphs):
             # Frame as a conversation so mem0 can extract facts
             messages = [
                 {"role": "user", "content": f"Remember this about me: {para}"},
@@ -48,14 +62,16 @@ def load_initial_profile(user_id: str) -> None:
             result = MEM0.add(messages, user_id=user_id)
             count = len(result.get("results", []))
             total_memories += count
-            if count > 0:
-                print(f"[mem0] Extracted {count} memories from paragraph")
+            print(f"[mem0] Paragraph {i+1}/{len(paragraphs)}: extracted {count} memories")
 
-        PROFILE_LOADED_FLAG.parent.mkdir(parents=True, exist_ok=True)
-        PROFILE_LOADED_FLAG.write_text("loaded")
+        # Update flag file to show completion
+        PROFILE_LOADED_FLAG.write_text(f"completed at {datetime.now().isoformat()}")
         print(f"[mem0] Initial profile loaded: {total_memories} total memories")
     except Exception as e:
         print(f"[mem0] Error loading initial profile: {e}")
+        import traceback
+        traceback.print_exc()
+        # Flag file stays with "loading started" status so we know it failed mid-load
 
 
 class MemoryManager:
@@ -104,6 +120,51 @@ class MemoryManager:
             )
 
             return assistant_reply
+        finally:
+            db.close()
+
+    async def handle_message_stream(
+        self, user_id: str, project_id: str, user_message: str
+    ):
+        """Streaming version of handle_message. Yields chunks as they arrive."""
+        db = SessionLocal()
+        try:
+            sess = self._get_or_create_session(db, user_id, project_id)
+            recent_msgs = self._get_recent_messages(db, sess.id)
+
+            # 1) pull mem0 memories
+            user_mems, proj_mems = self._fetch_mem0_context(
+                user_id, project_id, user_message
+            )
+
+            # 2) build messages for the LLM
+            prompt_messages = self._build_prompt(
+                user_mems,
+                proj_mems,
+                sess.context_snapshot,
+                sess.session_summary,
+                recent_msgs,
+                user_message,
+            )
+
+            # 3) stream LLM response
+            full_response = []
+            for chunk in self.llm(prompt_messages):
+                full_response.append(chunk)
+                yield chunk
+
+            assistant_reply = "".join(full_response)
+
+            # 4) store messages
+            self._store_message(db, sess.id, user_id, "user", user_message)
+            self._store_message(db, sess.id, user_id, "assistant", assistant_reply)
+            sess.last_activity_at = datetime.utcnow()
+            db.commit()
+
+            # 5) send to mem0
+            self._add_to_mem0(
+                user_id, project_id, recent_msgs, user_message, assistant_reply
+            )
         finally:
             db.close()
 
