@@ -57,6 +57,7 @@ class Message(Base):
     user_id = Column(String, nullable=False)
     role = Column(String, nullable=False)  # 'user' | 'assistant'
     content = Column(Text, nullable=False)
+    source = Column(String, nullable=True)  # 'telegram' | 'web' | None
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     session = relationship("Session", back_populates="messages")

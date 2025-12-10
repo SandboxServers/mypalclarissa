@@ -76,6 +76,7 @@ class StoreRequest(BaseModel):
     assistant_message: str
     thread_id: str = None  # Optional: use specific thread
     project: str = DEFAULT_PROJECT
+    source: str = "web"  # "telegram" or "web"
 
 
 class ThreadRenameRequest(BaseModel):
@@ -87,6 +88,14 @@ class MessageAppendRequest(BaseModel):
     content: str
     id: str = None
     createdAt: str = None
+    source: str = None  # "telegram" or "web"
+
+
+class ChatRequest(BaseModel):
+    message: str
+    thread_id: str = None
+    project: str = DEFAULT_PROJECT
+    source: str = "web"  # "telegram" or "web"
 
 
 @app.on_event("startup")
@@ -102,6 +111,23 @@ def startup():
     print("[api] MemoryManager initialized")
     load_initial_profile(USER_ID)
     print("[api] Initial profile loaded")
+
+    # Start Telegram bot in background if configured (only once)
+    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if telegram_token:
+        import threading
+        # Check if bot thread already exists
+        bot_running = any(t.name == "telegram_bot" for t in threading.enumerate())
+        if not bot_running:
+            from telegram_bot import start_bot_sync
+            bot_thread = threading.Thread(target=start_bot_sync, daemon=True, name="telegram_bot")
+            bot_thread.start()
+            print("[api] Telegram bot started in background")
+        else:
+            print("[api] Telegram bot already running, skipping duplicate start")
+    else:
+        print("[api] Telegram bot not configured (TELEGRAM_BOT_TOKEN not set)")
+
     print("[api] Ready to accept requests on http://localhost:8000")
 
 
@@ -178,9 +204,9 @@ def store_messages(request: StoreRequest):
 
         recent_msgs = mm._get_recent_messages(db, sess.id)
 
-        # Store messages
-        mm._store_message(db, sess.id, USER_ID, "user", request.user_message)
-        mm._store_message(db, sess.id, USER_ID, "assistant", request.assistant_message)
+        # Store messages with source tracking
+        mm._store_message(db, sess.id, USER_ID, "user", request.user_message, source=request.source)
+        mm._store_message(db, sess.id, USER_ID, "assistant", request.assistant_message, source=request.source)
         sess.last_activity_at = datetime.utcnow()
 
         # Auto-generate title from first user message if not set
@@ -199,6 +225,76 @@ def store_messages(request: StoreRequest):
         )
 
         return {"status": "ok", "thread_id": sess.id}
+    finally:
+        db.close()
+
+
+@app.post("/api/chat")
+def chat(request: ChatRequest):
+    """
+    Unified chat endpoint for both Telegram and web UI.
+    Gets context, calls LLM, stores messages, returns response.
+    """
+    print(f"[api] /api/chat from {request.source}: {request.message[:50]}...")
+    project_id = ensure_project(request.project or DEFAULT_PROJECT)
+
+    db = SessionLocal()
+    try:
+        # Get or use specific thread
+        if request.thread_id:
+            sess = db.query(Session).filter_by(id=request.thread_id).first()
+            if not sess:
+                raise HTTPException(status_code=404, detail="Thread not found")
+        else:
+            sess = mm._get_or_create_session(db, USER_ID, project_id)
+
+        recent_msgs = mm._get_recent_messages(db, sess.id)
+
+        # Get mem0 memories
+        user_mems, proj_mems = mm._fetch_mem0_context(
+            USER_ID, project_id, request.message
+        )
+
+        # Build the full prompt
+        prompt_messages = mm._build_prompt(
+            user_mems,
+            proj_mems,
+            sess.context_snapshot,
+            sess.session_summary,
+            recent_msgs,
+            request.message,
+        )
+
+        # Call LLM
+        llm = make_llm()
+        response = llm(prompt_messages)
+
+        # Store messages with source tracking
+        mm._store_message(db, sess.id, USER_ID, "user", request.message, source=request.source)
+        mm._store_message(db, sess.id, USER_ID, "assistant", response, source=request.source)
+        sess.last_activity_at = datetime.utcnow()
+
+        # Auto-generate title from first user message if not set
+        if not sess.title and request.message:
+            title = request.message[:50]
+            if len(request.message) > 50:
+                title += "..."
+            sess.title = title
+
+        db.commit()
+
+        # Add to mem0
+        mm._add_to_mem0(
+            USER_ID, project_id, recent_msgs,
+            request.message, response
+        )
+
+        print(f"[api] /api/chat response: {len(response)} chars")
+        return {
+            "content": response,
+            "thread_id": sess.id,
+            "source": request.source,
+        }
     finally:
         db.close()
 
@@ -230,11 +326,23 @@ def list_threads():
         )
         threads = []
         for sess in sessions:
+            # Determine status: pinned > regular > archived
+            if sess.archived == "pinned":
+                status = "regular"  # Show as regular but will have isPinned flag
+            elif sess.archived == "true":
+                status = "archived"
+            else:
+                status = "regular"
+
             threads.append({
                 "remoteId": sess.id,
-                "status": "archived" if sess.archived == "true" else "regular",
+                "status": status,
                 "title": sess.title,
+                "isPinned": sess.archived == "pinned",
             })
+
+        # Sort: pinned first, then by activity
+        threads.sort(key=lambda t: (not t.get("isPinned", False), 0))
         return {"threads": threads}
     finally:
         db.close()
@@ -305,11 +413,12 @@ def append_message(thread_id: str, request: MessageAppendRequest):
             user_id=USER_ID,
             role=request.role,
             content=request.content,
+            source=request.source or "web",  # Default to "web" if not specified
         )
         db.add(msg)
         sess.last_activity_at = datetime.utcnow()
         db.commit()
-        print(f"[api] Appended {request.role} message to thread {thread_id}")
+        print(f"[api] Appended {request.role} message to thread {thread_id} (source={msg.source})")
         return {"status": "ok", "id": str(msg.id)}
     finally:
         db.close()
@@ -409,6 +518,10 @@ def delete_thread(thread_id: str):
         if not sess:
             raise HTTPException(status_code=404, detail="Thread not found")
 
+        # Prevent archiving pinned threads
+        if sess.archived == "pinned":
+            raise HTTPException(status_code=400, detail="Cannot archive pinned thread")
+
         sess.archived = "true"
         db.commit()
         print(f"[api] Archived thread {thread_id}")
@@ -426,10 +539,18 @@ def get_thread(thread_id: str):
         if not sess:
             raise HTTPException(status_code=404, detail="Thread not found")
 
+        if sess.archived == "pinned":
+            status = "regular"
+        elif sess.archived == "true":
+            status = "archived"
+        else:
+            status = "regular"
+
         return {
             "remoteId": sess.id,
-            "status": "archived" if sess.archived == "true" else "regular",
+            "status": status,
             "title": sess.title,
+            "isPinned": sess.archived == "pinned",
         }
     finally:
         db.close()

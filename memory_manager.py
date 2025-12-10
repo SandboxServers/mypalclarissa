@@ -283,11 +283,14 @@ class MemoryManager:
         user_id: str,
         role: str,
         content: str,
-    ) -> None:
+        source: Optional[str] = None,
+    ) -> Message:
         msg = Message(session_id=session_id, user_id=user_id,
-                      role=role, content=content)
+                      role=role, content=content, source=source)
         db.add(msg)
         db.commit()
+        db.refresh(msg)
+        return msg
 
     # ---------- mem0 integration ----------
 

@@ -1,15 +1,22 @@
-# Combined Dockerfile for Clara (Backend + Frontend)
-# Uses supervisord to run both services in one container
+# Combined Dockerfile for Clara (Backend + Frontend + Tailscale)
+# Uses supervisord to run all services in one container
 
 FROM python:3.12-slim AS python-base
 
-# Install system dependencies including Node.js
+# Install system dependencies including Node.js and Tailscale
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     supervisor \
+    iptables \
+    iproute2 \
+    ca-certificates \
     && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y nodejs \
+    && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null \
+    && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list | tee /etc/apt/sources.list.d/tailscale.list \
+    && apt-get update \
+    && apt-get install -y tailscale \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -62,12 +69,72 @@ RUN echo '#!/bin/bash' > /app/start-frontend.sh && \
     echo 'exec node /app/frontend/.next/standalone/server.js' >> /app/start-frontend.sh && \
     chmod +x /app/start-frontend.sh
 
+# Create Tailscale startup script
+RUN echo '#!/bin/bash' > /app/start-tailscale.sh && \
+    echo 'set -e' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Skip if no auth key provided' >> /app/start-tailscale.sh && \
+    echo 'if [ -z "$TAILSCALE_AUTHKEY" ]; then' >> /app/start-tailscale.sh && \
+    echo '  echo "TAILSCALE_AUTHKEY not set, skipping Tailscale"' >> /app/start-tailscale.sh && \
+    echo '  exit 0' >> /app/start-tailscale.sh && \
+    echo 'fi' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo 'echo "Starting Tailscale daemon..."' >> /app/start-tailscale.sh && \
+    echo 'tailscaled --state=/data/tailscale/tailscaled.state --socket=/var/run/tailscale/tailscaled.sock &' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Wait for daemon to be ready' >> /app/start-tailscale.sh && \
+    echo 'sleep 2' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Build tailscale up command' >> /app/start-tailscale.sh && \
+    echo 'TS_ARGS="--authkey=$TAILSCALE_AUTHKEY --hostname=${TAILSCALE_HOSTNAME:-clara}"' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Add serve config if TAILSCALE_SERVE is set' >> /app/start-tailscale.sh && \
+    echo 'if [ "$TAILSCALE_FUNNEL" = "true" ]; then' >> /app/start-tailscale.sh && \
+    echo '  TS_ARGS="$TS_ARGS --advertise-tags=tag:funnel"' >> /app/start-tailscale.sh && \
+    echo 'fi' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo 'echo "Connecting to Tailscale network..."' >> /app/start-tailscale.sh && \
+    echo 'tailscale up $TS_ARGS' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Setup serve/funnel if requested' >> /app/start-tailscale.sh && \
+    echo 'if [ "$TAILSCALE_SERVE" = "true" ]; then' >> /app/start-tailscale.sh && \
+    echo '  echo "Setting up Tailscale Serve on port 3000..."' >> /app/start-tailscale.sh && \
+    echo '  tailscale serve --bg 3000' >> /app/start-tailscale.sh && \
+    echo 'fi' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo 'if [ "$TAILSCALE_FUNNEL" = "true" ]; then' >> /app/start-tailscale.sh && \
+    echo '  echo "Setting up Tailscale Funnel on port 3000..."' >> /app/start-tailscale.sh && \
+    echo '  tailscale funnel --bg 3000' >> /app/start-tailscale.sh && \
+    echo 'fi' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo 'echo "Tailscale connected!"' >> /app/start-tailscale.sh && \
+    echo 'tailscale status' >> /app/start-tailscale.sh && \
+    echo '' >> /app/start-tailscale.sh && \
+    echo '# Keep running' >> /app/start-tailscale.sh && \
+    echo 'wait' >> /app/start-tailscale.sh && \
+    chmod +x /app/start-tailscale.sh
+
+# Create tailscale state directory
+RUN mkdir -p /data/tailscale /var/run/tailscale
+
 # Create supervisord config
 RUN mkdir -p /var/log/supervisor && \
     echo '[supervisord]' > /etc/supervisor/conf.d/clara.conf && \
     echo 'nodaemon=true' >> /etc/supervisor/conf.d/clara.conf && \
     echo 'logfile=/var/log/supervisor/supervisord.log' >> /etc/supervisor/conf.d/clara.conf && \
     echo 'pidfile=/var/run/supervisord.pid' >> /etc/supervisor/conf.d/clara.conf && \
+    echo '' >> /etc/supervisor/conf.d/clara.conf && \
+    echo '[program:tailscale]' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'command=/app/start-tailscale.sh' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'directory=/app' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'autostart=true' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'autorestart=false' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'priority=5' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'startsecs=0' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'stdout_logfile=/dev/stdout' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'stdout_logfile_maxbytes=0' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'stderr_logfile=/dev/stderr' >> /etc/supervisor/conf.d/clara.conf && \
+    echo 'stderr_logfile_maxbytes=0' >> /etc/supervisor/conf.d/clara.conf && \
     echo '' >> /etc/supervisor/conf.d/clara.conf && \
     echo '[program:backend]' >> /etc/supervisor/conf.d/clara.conf && \
     echo 'command=uvicorn api:app --host 0.0.0.0 --port 8000' >> /etc/supervisor/conf.d/clara.conf && \
@@ -92,7 +159,7 @@ RUN mkdir -p /var/log/supervisor && \
     echo 'stderr_logfile=/dev/stderr' >> /etc/supervisor/conf.d/clara.conf && \
     echo 'stderr_logfile_maxbytes=0' >> /etc/supervisor/conf.d/clara.conf
 
-# Expose both ports
+# Expose ports (3000=frontend, 8000=backend API)
 EXPOSE 3000 8000
 
 # Health check

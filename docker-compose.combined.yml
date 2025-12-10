@@ -25,9 +25,23 @@ services:
       # User config
       - USER_ID=${USER_ID:-demo-user}
       - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
+      # Telegram bot (optional)
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_ALLOWED_USERS=${TELEGRAM_ALLOWED_USERS:-}
+      # Tailscale (optional) - get auth key from https://login.tailscale.com/admin/settings/keys
+      - TAILSCALE_AUTHKEY=${TAILSCALE_AUTHKEY:-}
+      - TAILSCALE_HOSTNAME=${TAILSCALE_HOSTNAME:-clara}
+      - TAILSCALE_SERVE=${TAILSCALE_SERVE:-false}
+      - TAILSCALE_FUNNEL=${TAILSCALE_FUNNEL:-false}
     volumes:
       - clara-data:/data
       - ./user_profile.txt:/app/user_profile.txt:ro
+    # Required for Tailscale
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/projects"]
       interval: 30s
