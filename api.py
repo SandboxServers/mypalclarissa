@@ -850,6 +850,70 @@ def import_imessage_contact(request: ContactImportRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Web Search API ==============
+
+TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
+
+
+class SearchRequest(BaseModel):
+    query: str
+    max_results: int = 5
+    search_depth: str = "basic"  # "basic" or "advanced"
+    include_answer: bool = True
+
+
+@app.post("/api/search")
+async def web_search(request: SearchRequest):
+    """Search the web using Tavily API."""
+    if not TAVILY_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Web search not available. Set TAVILY_API_KEY to enable.",
+        )
+
+    try:
+        import httpx
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://api.tavily.com/search",
+                json={
+                    "api_key": TAVILY_API_KEY,
+                    "query": request.query,
+                    "max_results": request.max_results,
+                    "search_depth": request.search_depth,
+                    "include_answer": request.include_answer,
+                },
+                timeout=30.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+        # Format results for the LLM
+        results = []
+        for r in data.get("results", []):
+            results.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "content": r.get("content", ""),
+                "score": r.get("score", 0),
+            })
+
+        print(f"[api] Web search for '{request.query}': {len(results)} results")
+
+        return {
+            "query": request.query,
+            "answer": data.get("answer"),
+            "results": results,
+        }
+    except httpx.HTTPStatusError as e:
+        print(f"[api] Tavily API error: {e.response.status_code} - {e.response.text}")
+        raise HTTPException(status_code=502, detail="Search API error")
+    except Exception as e:
+        print(f"[api] Web search error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

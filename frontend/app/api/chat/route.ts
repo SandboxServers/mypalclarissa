@@ -1,4 +1,5 @@
 import { streamText, extractReasoningMiddleware, wrapLanguageModel } from "ai";
+import { z } from "zod";
 import { createOpenAI } from "@ai-sdk/openai";
 import { createOpenAICompatible } from "@ai-sdk/openai-compatible";
 import { createAnthropic } from "@ai-sdk/anthropic";
@@ -12,7 +13,9 @@ interface ChatMessage {
 }
 
 // LLM Provider configuration
-const LLM_PROVIDER = (process.env.LLM_PROVIDER || "openrouter").toLowerCase().trim();
+const LLM_PROVIDER = (process.env.LLM_PROVIDER || "openrouter")
+  .toLowerCase()
+  .trim();
 
 // Create OpenRouter client (OpenAI-compatible)
 const openrouter = createOpenAI({
@@ -58,7 +61,9 @@ function supportsThinking(modelName: string): boolean {
     "o1",
     "o3",
   ];
-  return thinkingModels.some((m) => modelName.toLowerCase().includes(m.toLowerCase()));
+  return thinkingModels.some((m) =>
+    modelName.toLowerCase().includes(m.toLowerCase()),
+  );
 }
 
 // Get the appropriate model based on provider
@@ -87,7 +92,9 @@ function getModel() {
   // Wrap model with reasoning middleware if it supports thinking
   // This extracts <think>...</think> or <thinking>...</thinking> blocks
   if (supportsThinking(modelName)) {
-    console.log("[chat] Model supports thinking, wrapping with reasoning middleware");
+    console.log(
+      "[chat] Model supports thinking, wrapping with reasoning middleware",
+    );
     return wrapLanguageModel({
       model,
       middleware: extractReasoningMiddleware({
@@ -100,6 +107,43 @@ function getModel() {
 }
 
 const BACKEND_URL = process.env.BACKEND_URL || "http://localhost:8000";
+
+// Web search function for tool calling
+async function executeWebSearch(query: string) {
+  console.log("[chat] Web search for:", query);
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/search`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query, max_results: 5 }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      console.error("[chat] Search API error:", error);
+      return { error: "Search failed. Please try again." };
+    }
+
+    const data = await response.json();
+
+    // Format results for the LLM
+    const formattedResults = data.results
+      .map(
+        (r: { title: string; url: string; content: string }, i: number) =>
+          `[${i + 1}] ${r.title}\n${r.url}\n${r.content}`,
+      )
+      .join("\n\n");
+
+    return {
+      answer: data.answer,
+      results: formattedResults,
+      resultCount: data.results.length,
+    };
+  } catch (error) {
+    console.error("[chat] Web search error:", error);
+    return { error: "Search unavailable. Backend may be offline." };
+  }
+}
 
 // Extract text content from message (handles both content and parts formats)
 const getTextContent = (message: ChatMessage): string => {
@@ -124,7 +168,10 @@ const getTextContent = (message: ChatMessage): string => {
 
 export async function POST(req: Request) {
   const body = await req.json();
-  const { messages, threadId: bodyThreadId }: { messages: ChatMessage[]; threadId?: string } = body;
+  const {
+    messages,
+    threadId: bodyThreadId,
+  }: { messages: ChatMessage[]; threadId?: string } = body;
 
   // Get thread ID from header or body
   const threadId = req.headers.get("X-Thread-Id") || bodyThreadId;
@@ -167,10 +214,18 @@ export async function POST(req: Request) {
       const contextData = await contextResponse.json();
       contextMessages = contextData.messages;
       backendAvailable = true;
-      console.log("[chat] Got context from backend:", contextMessages.length, "messages");
+      console.log(
+        "[chat] Got context from backend:",
+        contextMessages.length,
+        "messages",
+      );
     } else {
       const errorText = await contextResponse.text();
-      console.error("[chat] Backend returned error:", contextResponse.status, errorText);
+      console.error(
+        "[chat] Backend returned error:",
+        contextResponse.status,
+        errorText,
+      );
     }
   } catch (error) {
     console.error("[chat] Backend not available:", error);
@@ -179,10 +234,12 @@ export async function POST(req: Request) {
   // Fallback: use messages directly if backend failed
   if (contextMessages.length === 0) {
     console.log("[chat] Using fallback - direct messages");
-    contextMessages = messages.map((m) => ({
-      role: m.role,
-      content: getTextContent(m),
-    })).filter((m) => m.content.length > 0);
+    contextMessages = messages
+      .map((m) => ({
+        role: m.role,
+        content: getTextContent(m),
+      }))
+      .filter((m) => m.content.length > 0);
   }
 
   // Final check
@@ -194,6 +251,18 @@ export async function POST(req: Request) {
   const result = streamText({
     model: getModel(),
     messages: contextMessages as any,
+    tools: {
+      webSearch: {
+        name: "webSearch",
+        description:
+          "Search the web for current information. Use this when the user asks about recent events, news, weather, or information that may have changed since your knowledge cutoff. Also use when the user explicitly asks you to search or look something up.",
+        inputSchema: z.object({
+          query: z.string().describe("The search query to look up"),
+        }),
+        execute: async ({ query }) => executeWebSearch(query),
+      },
+    },
+
     onFinish: async ({ text }) => {
       // Store the conversation in our backend (only if backend is available)
       if (backendAvailable) {

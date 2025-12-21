@@ -13,6 +13,8 @@ from models import Message, Session
 CONTEXT_MESSAGE_COUNT = 20
 # Generate/update summary every N messages
 SUMMARY_INTERVAL = 10
+# Max chars for mem0 search query (embedding model limit is ~8k tokens)
+MAX_SEARCH_QUERY_CHARS = 6000
 
 # Paths for initial profile loading
 BASE_DIR = Path(__file__).parent
@@ -212,9 +214,16 @@ class MemoryManager:
         if MEM0 is None:
             return [], []
 
-        user_res = MEM0.search(user_message, user_id=user_id)
+        # Truncate search query if too long (embedding model has token limit)
+        search_query = user_message
+        if len(search_query) > MAX_SEARCH_QUERY_CHARS:
+            # Keep end (most recent context) for better semantic matching
+            search_query = search_query[-MAX_SEARCH_QUERY_CHARS:]
+            print(f"[mem0] Truncated search query to {MAX_SEARCH_QUERY_CHARS} chars")
+
+        user_res = MEM0.search(search_query, user_id=user_id)
         proj_res = MEM0.search(
-            user_message,
+            search_query,
             user_id=user_id,
             filters={"project_id": project_id},
         )
