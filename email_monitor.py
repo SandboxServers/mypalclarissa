@@ -10,6 +10,7 @@ Provides:
 import asyncio
 import imaplib
 import email
+import json
 import re
 import smtplib
 from email.header import decode_header
@@ -18,6 +19,8 @@ from email.mime.multipart import MIMEMultipart
 from datetime import datetime, UTC
 from dataclasses import dataclass
 import os
+
+from llm_backends import make_llm
 
 # Email configuration - loaded from environment or hardcoded for now
 EMAIL_ADDRESS = os.environ.get("CLARA_EMAIL_ADDRESS")
@@ -40,6 +43,7 @@ class EmailInfo:
     subject: str
     date: str
     preview: str = ""
+    body: str = ""
     is_read: bool = True
 
 
@@ -227,9 +231,67 @@ class EmailMonitor:
             mail.logout()
             self.last_check = datetime.now(UTC)
             return emails, None
-            
+
         except Exception as e:
             return [], str(e)
+
+    def get_full_email(self, uid: str) -> tuple[EmailInfo | None, str | None]:
+        """Fetch a complete email including body by UID."""
+        try:
+            mail = self._connect()
+            mail.select("INBOX")
+
+            # Fetch full message by UID
+            status, msg_data = mail.uid("fetch", uid, "(RFC822)")
+            if status != "OK":
+                mail.logout()
+                return None, f"Failed to fetch email {uid}"
+
+            for response_part in msg_data:
+                if isinstance(response_part, tuple):
+                    msg = email.message_from_bytes(response_part[1])
+                    from_addr = self._decode_header_value(msg.get("From", ""))
+                    subject = self._decode_header_value(msg.get("Subject", "(No Subject)"))
+                    date = msg.get("Date", "")
+                    body = self._get_email_body(msg)
+
+                    mail.logout()
+                    return EmailInfo(
+                        uid=uid,
+                        from_addr=from_addr,
+                        subject=subject,
+                        date=date,
+                        body=body,
+                        is_read=True
+                    ), None
+
+            mail.logout()
+            return None, "Email not found"
+
+        except Exception as e:
+            return None, str(e)
+
+    def _get_email_body(self, msg) -> str:
+        """Extract the full text body from an email."""
+        body = ""
+        if msg.is_multipart():
+            for part in msg.walk():
+                if part.get_content_type() == "text/plain":
+                    try:
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            body = payload.decode('utf-8', errors='replace')
+                            break
+                    except Exception:
+                        pass
+        else:
+            try:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    body = payload.decode('utf-8', errors='replace')
+            except Exception:
+                pass
+        return body.strip()
 
 
 # Global monitor instance
@@ -242,6 +304,115 @@ def get_email_monitor() -> EmailMonitor:
     if _email_monitor is None:
         _email_monitor = EmailMonitor()
     return _email_monitor
+
+
+# LLM for email evaluation
+_email_llm = None
+
+
+def _get_email_llm():
+    """Get LLM for email evaluation (lazy init)."""
+    global _email_llm
+    if _email_llm is None:
+        _email_llm = make_llm()
+    return _email_llm
+
+
+def evaluate_and_respond(email_info: EmailInfo) -> dict:
+    """
+    Use LLM to evaluate an email and decide whether to respond.
+
+    Returns dict with:
+        - should_respond: bool
+        - reason: str (why or why not to respond)
+        - response: str (the response to send, if should_respond)
+    """
+    llm = _get_email_llm()
+
+    # Build prompt for evaluation
+    prompt = f"""You are Clara, a helpful AI assistant. You've received an email and need to decide if you should respond.
+
+EMAIL DETAILS:
+From: {email_info.from_addr}
+Subject: {email_info.subject}
+Date: {email_info.date}
+
+BODY:
+{email_info.body[:3000]}
+
+INSTRUCTIONS:
+1. Evaluate if this email requires or warrants a response from you
+2. DO NOT respond to:
+   - Automated notifications (order confirmations, shipping updates, etc.)
+   - Marketing/promotional emails
+   - Newsletters
+   - No-reply addresses
+   - Spam
+3. DO respond to:
+   - Personal emails addressed to you/Clara
+   - Questions that need answers
+   - Requests for help or information
+   - Emails that seem to expect a reply
+
+Respond with a JSON object (no markdown, just raw JSON):
+{{
+    "should_respond": true/false,
+    "reason": "brief explanation of your decision",
+    "response": "your email response if should_respond is true, otherwise empty string"
+}}
+
+If you do respond, write as Clara - be helpful, friendly, and concise. Sign off naturally."""
+
+    try:
+        result = llm([{"role": "user", "content": prompt}])
+
+        # Parse JSON from response
+        # Try to extract JSON if wrapped in markdown
+        json_str = result.strip()
+        if json_str.startswith("```"):
+            json_str = re.sub(r'^```(?:json)?\n?', '', json_str)
+            json_str = re.sub(r'\n?```$', '', json_str)
+
+        parsed = json.loads(json_str)
+        return {
+            "should_respond": parsed.get("should_respond", False),
+            "reason": parsed.get("reason", ""),
+            "response": parsed.get("response", "")
+        }
+
+    except Exception as e:
+        print(f"[email] Error evaluating email: {e}")
+        return {
+            "should_respond": False,
+            "reason": f"Error evaluating: {e}",
+            "response": ""
+        }
+
+
+def send_email_response(to_addr: str, subject: str, body: str) -> tuple[bool, str]:
+    """Send an email response."""
+    try:
+        smtp_server = os.getenv("CLARA_SMTP_SERVER", "smtp.titan.email")
+        smtp_port = int(os.getenv("CLARA_SMTP_PORT", "465"))
+
+        # Add Re: prefix if not already there
+        if not subject.lower().startswith("re:"):
+            subject = f"Re: {subject}"
+
+        msg = MIMEMultipart()
+        msg["From"] = EMAIL_ADDRESS
+        msg["To"] = to_addr
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(EMAIL_ADDRESS, EMAIL_PASSWORD)
+            server.send_message(msg)
+
+        return True, "Email sent successfully"
+
+    except Exception as e:
+        return False, str(e)
 
 
 # Tool definition for check_email
@@ -365,6 +536,12 @@ async def email_check_loop(bot):
     """
     Background task that checks for new emails periodically.
 
+    For each new email:
+    1. Fetches the full email content
+    2. Uses LLM to decide if Clara should respond
+    3. Sends a response if appropriate
+    4. Notifies the user via Discord DM
+
     Should be started from on_ready() in the Discord bot.
     """
     await bot.wait_until_ready()
@@ -375,35 +552,97 @@ async def email_check_loop(bot):
 
     monitor = get_email_monitor()
     print(f"[email] Starting email monitor for {EMAIL_ADDRESS}")
+    print(f"[email] Auto-respond enabled - Clara will evaluate and respond to emails")
     print(f"[email] Will notify user ID {NOTIFY_USER_ID}")
-    
+
     while not bot.is_closed():
         try:
             new_emails, error = monitor.get_new_emails()
-            
+
             if error:
                 print(f"[email] Error: {error}")
             elif new_emails:
                 print(f"[email] {len(new_emails)} new email(s) detected!")
-                
+
                 # Get the user to notify
                 try:
                     user = await bot.fetch_user(NOTIFY_USER_ID)
-                    
-                    for email_info in new_emails:
-                        notification = (
-                            f"📬 **New Email!**\n"
-                            f"**From:** {email_info.from_addr}\n"
-                            f"**Subject:** {email_info.subject}\n"
-                            f"**Date:** {email_info.date}"
-                        )
-                        await user.send(notification)
-                        print(f"[email] Notified about email from {email_info.from_addr}")
-                        
                 except Exception as e:
-                    print(f"[email] Failed to notify user: {e}")
-            
+                    print(f"[email] Failed to fetch user for notifications: {e}")
+                    user = None
+
+                for email_header in new_emails:
+                    # Fetch full email with body
+                    full_email, fetch_error = monitor.get_full_email(email_header.uid)
+
+                    if fetch_error or not full_email:
+                        print(f"[email] Failed to fetch full email: {fetch_error}")
+                        # Still notify about the email
+                        if user:
+                            await user.send(
+                                f"📬 **New Email!**\n"
+                                f"**From:** {email_header.from_addr}\n"
+                                f"**Subject:** {email_header.subject}\n"
+                                f"**Date:** {email_header.date}\n"
+                                f"*(Could not fetch body for auto-response)*"
+                            )
+                        continue
+
+                    print(f"[email] Evaluating email from {full_email.from_addr}: {full_email.subject}")
+
+                    # Use LLM to decide whether to respond
+                    evaluation = evaluate_and_respond(full_email)
+
+                    if evaluation["should_respond"]:
+                        print(f"[email] Clara decided to respond: {evaluation['reason']}")
+
+                        # Extract reply-to address (use From if no Reply-To)
+                        reply_to = full_email.from_addr
+                        # Handle "Name <email>" format
+                        email_match = re.search(r'<([^>]+)>', reply_to)
+                        if email_match:
+                            reply_to = email_match.group(1)
+
+                        # Send the response
+                        success, send_result = send_email_response(
+                            to_addr=reply_to,
+                            subject=full_email.subject,
+                            body=evaluation["response"]
+                        )
+
+                        if success:
+                            print(f"[email] Response sent to {reply_to}")
+                            if user:
+                                await user.send(
+                                    f"📬 **New Email - Clara Responded!**\n"
+                                    f"**From:** {full_email.from_addr}\n"
+                                    f"**Subject:** {full_email.subject}\n\n"
+                                    f"**Clara's Response:**\n{evaluation['response'][:1500]}"
+                                )
+                        else:
+                            print(f"[email] Failed to send response: {send_result}")
+                            if user:
+                                await user.send(
+                                    f"📬 **New Email - Response Failed!**\n"
+                                    f"**From:** {full_email.from_addr}\n"
+                                    f"**Subject:** {full_email.subject}\n"
+                                    f"**Error:** {send_result}\n\n"
+                                    f"**Clara wanted to say:**\n{evaluation['response'][:1000]}"
+                                )
+                    else:
+                        print(f"[email] Clara decided not to respond: {evaluation['reason']}")
+                        if user:
+                            # Truncate body preview
+                            body_preview = full_email.body[:500] + "..." if len(full_email.body) > 500 else full_email.body
+                            await user.send(
+                                f"📬 **New Email** *(no response needed)*\n"
+                                f"**From:** {full_email.from_addr}\n"
+                                f"**Subject:** {full_email.subject}\n"
+                                f"**Reason:** {evaluation['reason']}\n\n"
+                                f"**Preview:**\n{body_preview}"
+                            )
+
         except Exception as e:
             print(f"[email] Loop error: {e}")
-        
+
         await asyncio.sleep(CHECK_INTERVAL)
