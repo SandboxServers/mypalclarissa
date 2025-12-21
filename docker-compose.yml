@@ -21,6 +21,12 @@ services:
       - NANOGPT_MEM0_MODEL=${NANOGPT_MEM0_MODEL:-openai/gpt-oss-120b}
       # OpenAI (for embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # PostgreSQL (optional - uses SQLite if not set)
+      - DATABASE_URL=${DATABASE_URL:-}
+      - MEM0_DATABASE_URL=${MEM0_DATABASE_URL:-}
+      # Mem0 Provider
+      - MEM0_PROVIDER=${MEM0_PROVIDER:-openrouter}
+      - MEM0_MODEL=${MEM0_MODEL:-openai/gpt-4o-mini}
       # User config
       - USER_ID=${USER_ID:-demo-user}
       - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
@@ -69,8 +75,51 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # Discord bot (optional - run with: docker-compose --profile discord up)
+  discord-bot:
+    image: ${REGISTRY:-}mypalclara-discord:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.discord
+    container_name: mypalclara-discord
+    profiles:
+      - discord
+    environment:
+      # Discord
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
+      - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
+      - DISCORD_ALLOWED_CHANNELS=${DISCORD_ALLOWED_CHANNELS:-}
+      - DISCORD_ALLOWED_ROLES=${DISCORD_ALLOWED_ROLES:-}
+      # LLM Provider
+      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      # OpenRouter
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
+      # NanoGPT
+      - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
+      - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
+      # OpenAI (for embeddings)
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      # PostgreSQL (optional)
+      - DATABASE_URL=${DATABASE_URL:-}
+      - MEM0_DATABASE_URL=${MEM0_DATABASE_URL:-}
+      # Mem0 Provider
+      - MEM0_PROVIDER=${MEM0_PROVIDER:-openrouter}
+      - MEM0_MODEL=${MEM0_MODEL:-openai/gpt-4o-mini}
+      # Web search
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-}
+      # User config
+      - USER_ID=${USER_ID:-demo-user}
+      - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
+    volumes:
+      - mypalclara-data:/data
+      - mypalclara-files:/app/clara_files
+      - /var/run/docker.sock:/var/run/docker.sock  # For Docker sandbox
+    restart: unless-stopped
+
 volumes:
   mypalclara-data:
+  mypalclara-files:
 
 networks:
   default:

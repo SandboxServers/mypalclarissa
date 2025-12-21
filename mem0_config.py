@@ -68,7 +68,13 @@ def _restore_env_vars():
 # Store mem0 data in a local directory
 BASE_DATA_DIR = Path(os.getenv("DATA_DIR", str(Path(__file__).parent)))
 QDRANT_DATA_DIR = BASE_DATA_DIR / "qdrant_data"
-QDRANT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+# PostgreSQL with pgvector for production (optional)
+MEM0_DATABASE_URL = os.getenv("MEM0_DATABASE_URL")
+
+# Only create Qdrant directory if we're using it
+if not MEM0_DATABASE_URL:
+    QDRANT_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Graph memory configuration (optional - for relationship tracking)
 # Master toggle - set to "true" to enable graph memory (disabled by default)
@@ -276,19 +282,40 @@ OUTPUT FORMAT (JSON only):
 }
 """
 
+# Build vector store config - pgvector for production, Qdrant for local dev
+if MEM0_DATABASE_URL:
+    # PostgreSQL with pgvector
+    # Fix postgres:// vs postgresql:// prefix
+    pgvector_url = MEM0_DATABASE_URL
+    if pgvector_url.startswith("postgres://"):
+        pgvector_url = pgvector_url.replace("postgres://", "postgresql://", 1)
+
+    vector_store_config = {
+        "provider": "pgvector",
+        "config": {
+            "dbname": pgvector_url,
+            "collection_name": "clara_memories",
+        },
+    }
+    print(f"[mem0] Vector store: pgvector at {pgvector_url.split('@')[1] if '@' in pgvector_url else 'configured'}")
+else:
+    # Fallback to Qdrant for local development
+    vector_store_config = {
+        "provider": "qdrant",
+        "config": {
+            "collection_name": "mypalclara_memories",
+            "path": str(QDRANT_DATA_DIR),
+        },
+    }
+    print(f"[mem0] Vector store: Qdrant at {QDRANT_DATA_DIR}")
+
 # Build config - embeddings always use OpenAI
 # NOTE: Custom prompts disabled - they break both vector AND graph extraction
 # mem0's default prompts work better with graph entity extraction
 config = {
     # "custom_prompt": CUSTOM_EXTRACTION_PROMPT,
     # "custom_update_memory_prompt": CUSTOM_UPDATE_PROMPT,
-    "vector_store": {
-        "provider": "qdrant",
-        "config": {
-            "collection_name": "mypalclara_memories",
-            "path": str(QDRANT_DATA_DIR),
-        },
-    },
+    "vector_store": vector_store_config,
     "embedder": {
         "provider": "openai",
         "config": {

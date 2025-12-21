@@ -1,0 +1,34 @@
+# Discord Bot Dockerfile for MyPalClara
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Poetry
+RUN pip install poetry
+
+# Copy dependency files
+COPY pyproject.toml poetry.lock* ./
+
+# Configure Poetry to not create virtual environment
+RUN poetry config virtualenvs.create false
+
+# Install dependencies (production only)
+RUN poetry install --only main --no-interaction --no-ansi
+
+# Copy application code
+COPY *.py ./
+COPY user_profile.txt* ./
+
+# Create directories for persistent data
+RUN mkdir -p /data /app/clara_files
+ENV DATA_DIR=/data
+ENV CLARA_FILES_DIR=/app/clara_files
+
+# Run the Discord bot
+CMD ["python", "discord_bot.py"]
