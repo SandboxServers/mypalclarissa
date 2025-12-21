@@ -1,4 +1,45 @@
 services:
+  # PostgreSQL databases (run with: docker-compose --profile postgres up)
+  postgres:
+    image: postgres:16
+    container_name: mypalclara-postgres
+    profiles:
+      - postgres
+    environment:
+      POSTGRES_USER: clara
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clara}
+      POSTGRES_DB: clara_main
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clara -d clara_main"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  postgres-vectors:
+    image: pgvector/pgvector:pg16
+    container_name: mypalclara-postgres-vectors
+    profiles:
+      - postgres
+    environment:
+      POSTGRES_USER: clara
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clara}
+      POSTGRES_DB: clara_vectors
+    volumes:
+      - postgres-vectors-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clara -d clara_vectors"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     image: ${REGISTRY:-}mypalclara-backend:latest
     build:
@@ -120,6 +161,8 @@ services:
 volumes:
   mypalclara-data:
   mypalclara-files:
+  postgres-data:
+  postgres-vectors-data:
 
 networks:
   default:

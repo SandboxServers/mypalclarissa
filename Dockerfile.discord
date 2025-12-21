@@ -1,4 +1,5 @@
 # Discord Bot Dockerfile for MyPalClara
+# For local development with docker-compose
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -23,7 +24,10 @@ RUN poetry install --only main --no-interaction --no-ansi
 
 # Copy application code
 COPY *.py ./
-COPY user_profile.txt* ./
+
+# Copy user_profile.txt if it exists (optional)
+RUN touch /app/user_profile.txt
+COPY user_profile.tx[t] ./
 
 # Create directories for persistent data
 RUN mkdir -p /data /app/clara_files
