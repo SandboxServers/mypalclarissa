@@ -44,6 +44,8 @@ from docker_tools import DOCKER_TOOLS, get_sandbox_manager
 from llm_backends import make_llm, make_llm_with_tools
 from local_files import LOCAL_FILE_TOOLS, get_file_manager
 from memory_manager import MemoryManager
+from email_monitor import EMAIL_TOOLS, handle_email_tool, email_check_loop, get_email_monitor
+
 from models import ChannelSummary, Project, Session
 
 
@@ -139,7 +141,7 @@ DOCKER_ENABLED = True  # Docker sandbox is always available if Docker is running
 MAX_TOOL_ITERATIONS = 10  # Max tool call rounds per response
 
 # Combined tools: Docker sandbox + local file management
-ALL_TOOLS = LOCAL_FILE_TOOLS + DOCKER_TOOLS
+ALL_TOOLS = LOCAL_FILE_TOOLS + DOCKER_TOOLS + EMAIL_TOOLS
 
 # Discord message limit
 DISCORD_MSG_LIMIT = 2000
@@ -588,6 +590,9 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
         monitor.start_time = datetime.now(UTC)
         monitor.update_guilds(self.guilds)
         monitor.log("system", "Bot", f"Logged in as {self.user}")
+        # Start email monitoring background task
+        self.loop.create_task(email_check_loop(self))
+        print(f"{C.GREEN}[email]{C.RESET} Email monitoring task started")
 
     async def on_guild_join(self, guild):
         """Called when bot joins a guild."""
@@ -1242,6 +1247,9 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
             # Chat history tools
             "search_chat_history": ("🔎", "Searching chat history"),
             "get_chat_history": ("📜", "Retrieving chat history"),
+            # Email tools
+            "check_email": ("📬", "Checking email"),
+            "send_email": ("📤", "Sending email"),
         }
 
         for iteration in range(MAX_TOOL_ITERATIONS):
@@ -1448,6 +1456,9 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
             "write_file", "list_files", "run_shell", "unzip_file",
             "web_search", "run_claude_code"
         }
+        
+        # Email tools
+        email_tools = {"check_email", "send_email"}
 
         if tool_name in docker_tools:
             # Use Docker sandbox manager
@@ -1456,6 +1467,10 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
                 return result.output
             else:
                 return f"Error: {result.error}"
+        
+        # Email tools
+        elif tool_name in email_tools:
+            return await handle_email_tool(tool_name, arguments)
 
         # Chat history tools (require channel access)
         elif tool_name == "search_chat_history":
