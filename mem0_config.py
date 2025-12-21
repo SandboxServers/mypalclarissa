@@ -293,7 +293,7 @@ if MEM0_DATABASE_URL:
     vector_store_config = {
         "provider": "pgvector",
         "config": {
-            "dbname": pgvector_url,
+            "connection_string": pgvector_url,
             "collection_name": "clara_memories",
         },
     }
