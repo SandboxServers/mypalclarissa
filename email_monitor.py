@@ -20,6 +20,7 @@ from datetime import datetime, UTC
 from dataclasses import dataclass
 import os
 
+from bot_config import BOT_NAME
 from llm_backends import make_llm
 
 # Email configuration - loaded from environment or hardcoded for now
@@ -333,7 +334,7 @@ def evaluate_and_respond(email_info: EmailInfo) -> dict:
     llm = _get_email_llm()
 
     # Build prompt for evaluation
-    prompt = f"""You are Clara, a helpful AI assistant. You've received an email and need to decide if you should respond.
+    prompt = f"""You are {BOT_NAME}, a helpful AI assistant. You've received an email and need to decide if you should respond.
 
 EMAIL DETAILS:
 From: {email_info.from_addr}
@@ -352,7 +353,7 @@ INSTRUCTIONS:
    - No-reply addresses
    - Spam
 3. DO respond to:
-   - Personal emails addressed to you/Clara
+   - Personal emails addressed to you/{BOT_NAME}
    - Questions that need answers
    - Requests for help or information
    - Emails that seem to expect a reply
@@ -364,7 +365,7 @@ Respond with a JSON object (no markdown, just raw JSON):
     "response": "your email response if should_respond is true, otherwise empty string"
 }}
 
-If you do respond, write as Clara - be helpful, friendly, and concise. Sign off naturally."""
+If you do respond, write as {BOT_NAME} - be helpful, friendly, and concise. Sign off naturally."""
 
     try:
         result = llm([{"role": "user", "content": prompt}])
