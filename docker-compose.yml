@@ -139,6 +139,8 @@ services:
       - discord
     ports:
       - "8001:8001"  # Monitor dashboard
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # Access host services (clewdr, etc.)
     environment:
       # Discord
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
