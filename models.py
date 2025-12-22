@@ -10,12 +10,14 @@ def utcnow():
 
 
 from sqlalchemy import (
+    Boolean,
     Column,
-    String,
     DateTime,
-    Text,
+    Float,
     ForeignKey,
     Integer,
+    String,
+    Text,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -77,3 +79,32 @@ class ChannelSummary(Base):
     summary = Column(Text, default="")
     summary_cutoff_at = Column(DateTime, nullable=True)  # newest summarized msg ts
     last_updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class OrganicResponseLog(Base):
+    """Log of organic response evaluations and decisions."""
+
+    __tablename__ = "organic_response_logs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    channel_id = Column(String, index=True, nullable=False)
+    channel_name = Column(String, nullable=True)
+    guild_id = Column(String, nullable=True)
+
+    # Evaluation context
+    trigger_reason = Column(String, nullable=True)  # lull, trigger_phrase, periodic
+    message_context = Column(Text, nullable=True)  # Formatted recent messages
+
+    # Decision
+    should_respond = Column(Boolean, default=False)
+    confidence = Column(Float, default=0.0)
+    response_type = Column(String, nullable=True)  # insight|support|humor|etc
+    reason = Column(String, nullable=True)
+
+    # Response (if sent)
+    response_text = Column(Text, nullable=True)
+    response_sent = Column(Boolean, default=False)
+
+    # Timing
+    evaluated_at = Column(DateTime, default=utcnow)
+    responded_at = Column(DateTime, nullable=True)

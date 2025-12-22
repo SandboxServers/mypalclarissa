@@ -47,6 +47,11 @@ from memory_manager import MemoryManager
 from email_monitor import EMAIL_TOOLS, handle_email_tool, email_check_loop, get_email_monitor
 
 from models import ChannelSummary, Project, Session
+from organic_response import (
+    CONFIDENCE_THRESHOLD,
+    ORGANIC_ENABLED,
+    OrganicResponseManager,
+)
 
 
 # ============== Console Colors ==============
@@ -283,6 +288,9 @@ class ClaraDiscordBot(discord.Client):
         # Initialize Clara's backend
         init_db()
         self.mm = MemoryManager(llm_callable=self._sync_llm)
+
+        # Initialize organic response system
+        self.organic_manager = OrganicResponseManager(self)
 
     def _sync_llm(self, messages: list[dict]) -> str:
         """Synchronous LLM call for MemoryManager."""
@@ -594,6 +602,11 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
         self.loop.create_task(email_check_loop(self))
         print(f"{C.GREEN}[email]{C.RESET} Email monitoring task started")
 
+        # Start organic response evaluation loop
+        self.loop.create_task(self._organic_evaluation_loop())
+        status = "enabled" if ORGANIC_ENABLED else "disabled"
+        print(f"{C.GREEN}[organic]{C.RESET} Organic response system {status}")
+
     async def on_guild_join(self, guild):
         """Called when bot joins a guild."""
         monitor.update_guilds(self.guilds)
@@ -612,6 +625,15 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
         # Ignore own messages
         if message.author == self.user:
             return
+
+        # Ignore bot messages for organic response
+        if message.author.bot:
+            return
+
+        # Record ALL messages for organic response buffer (before mention check)
+        trigger = self.organic_manager.record_message(message)
+        if trigger:
+            print(f"[organic] Trigger: {trigger} in #{getattr(message.channel, 'name', 'DM')}")
 
         # Check if this is a DM
         is_dm = message.guild is None
@@ -1905,6 +1927,109 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
 
         finally:
             db.close()
+
+    # ---------- Organic Response System ----------
+
+    async def _organic_evaluation_loop(self):
+        """Background task to process organic response evaluations."""
+        await self.wait_until_ready()
+        print("[organic] Evaluation loop started")
+
+        while not self.is_closed():
+            if self.organic_manager.pending_evaluation:
+                channel_id = self.organic_manager.pending_evaluation.pop()
+                channel = self.get_channel(channel_id)
+                if channel:
+                    try:
+                        await self._evaluate_organic_response(channel)
+                    except Exception as e:
+                        print(f"[organic] Evaluation error: {e}")
+                        import traceback
+                        traceback.print_exc()
+
+            await asyncio.sleep(5)  # Check every 5 seconds
+
+    async def _evaluate_organic_response(self, channel):
+        """Evaluate and potentially send organic response."""
+        channel_id = channel.id
+        channel_name = getattr(channel, "name", "DM")
+
+        # Rate limit check
+        can_respond, limit_reason = self.organic_manager.limiter.can_respond(
+            channel_id
+        )
+        if not can_respond:
+            print(f"[organic] Skipping #{channel_name}: {limit_reason}")
+            return
+
+        # Quiet hours check
+        if self.organic_manager.is_quiet_hours():
+            print(f"[organic] Skipping #{channel_name}: quiet hours")
+            return
+
+        # Get context
+        formatted = self.organic_manager.buffer.get_formatted(channel_id, count=20)
+        if len(formatted) < 50:  # Not enough context
+            return
+
+        # Get participant memories
+        recent = self.organic_manager.buffer.get_recent(channel_id, count=10)
+        participant_ids = list(set(m.author_id for m in recent))
+
+        # Fetch memories (reuse existing memory manager)
+        memories_text = "No relevant memories."
+        try:
+            user_id = participant_ids[0] if participant_ids else "organic"
+            project_id = f"discord-{channel.guild.id if channel.guild else 'dm'}"
+            user_mems, proj_mems = self.mm.fetch_mem0_context(
+                user_id, project_id, formatted[:500]
+            )
+            if user_mems or proj_mems:
+                memories_text = "\n".join(user_mems + proj_mems)
+        except Exception as e:
+            print(f"[organic] Memory fetch error: {e}")
+
+        # Build and call evaluation prompt
+        eval_prompt = self.organic_manager.build_evaluation_prompt(
+            formatted, memories_text
+        )
+
+        loop = asyncio.get_event_loop()
+        llm = make_llm()
+        raw_result = await loop.run_in_executor(None, llm, eval_prompt)
+
+        result = self.organic_manager.parse_evaluation(raw_result)
+        print(
+            f"[organic] #{channel_name}: respond={result.get('should_respond')}, "
+            f"conf={result.get('confidence', 0):.2f}, reason={result.get('reason', 'N/A')}"
+        )
+
+        # Decide whether to respond
+        should_send = (
+            result.get("should_respond")
+            and result.get("confidence", 0) >= CONFIDENCE_THRESHOLD
+            and result.get("draft_response")
+        )
+
+        guild_id = str(channel.guild.id) if channel.guild else None
+        trigger_reason = "evaluation"  # Could track actual trigger from record_message
+
+        if should_send:
+            draft = result["draft_response"]
+            await channel.send(draft)
+            self.organic_manager.limiter.record_response(channel_id)
+            print(f"[organic] Sent response to #{channel_name}")
+
+        # Log to database
+        self.organic_manager.log_evaluation(
+            channel_id=channel_id,
+            channel_name=channel_name,
+            guild_id=guild_id,
+            trigger_reason=trigger_reason,
+            context=formatted,
+            result=result,
+            response_sent=should_send,
+        )
 
 
 # ============== FastAPI Monitor Dashboard ==============
