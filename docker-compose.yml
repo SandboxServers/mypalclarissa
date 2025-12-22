@@ -128,6 +128,38 @@ services:
       start_period: 15s
     restart: unless-stopped
 
+  # Gemini OpenAI Proxy (optional - provides Gemini access via OpenAI-compatible API)
+  gemini-proxy:
+    image: ${REGISTRY:-}mypalclara-gemini-proxy:latest
+    build:
+      context: ../gemini-cli-openai
+      dockerfile: Dockerfile
+    container_name: mypalclara-gemini-proxy
+    profiles:
+      - gemini
+      - discord
+    ports:
+      - "8787:8787"
+    environment:
+      # Required: OAuth2 credentials from gemini CLI (~/.gemini/oauth_creds.json)
+      - GCP_SERVICE_ACCOUNT=${GCP_SERVICE_ACCOUNT}
+      # Optional: Project ID (auto-discovered if not set)
+      - GEMINI_PROJECT_ID=${GEMINI_PROJECT_ID:-}
+      # Optional: API key for auth (if set, requires Authorization header)
+      - OPENAI_API_KEY=${GEMINI_PROXY_API_KEY:-}
+      # Thinking features (optional)
+      - ENABLE_FAKE_THINKING=${ENABLE_FAKE_THINKING:-false}
+      - ENABLE_REAL_THINKING=${ENABLE_REAL_THINKING:-false}
+      - STREAM_THINKING_AS_CONTENT=${STREAM_THINKING_AS_CONTENT:-false}
+      - ENABLE_AUTO_MODEL_SWITCHING=${ENABLE_AUTO_MODEL_SWITCHING:-true}
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8787/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
   # Discord bot (optional - run with: docker-compose --profile discord up)
   discord-bot:
     image: ${REGISTRY:-}mypalclara-discord:latest
@@ -165,6 +197,8 @@ services:
       - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
       - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
       # Custom OpenAI (when LLM_PROVIDER=openai)
+      # For internal gemini-proxy: use http://gemini-proxy:8787/v1
+      # For external proxies (clewdr, etc.): use http://host.docker.internal:<port>/v1
       - CUSTOM_OPENAI_API_KEY=${CUSTOM_OPENAI_API_KEY:-}
       - CUSTOM_OPENAI_BASE_URL=${CUSTOM_OPENAI_BASE_URL:-https://api.openai.com/v1}
       - CUSTOM_OPENAI_MODEL=${CUSTOM_OPENAI_MODEL:-gpt-4o}
