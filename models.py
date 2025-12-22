@@ -108,3 +108,22 @@ class OrganicResponseLog(Base):
     # Timing
     evaluated_at = Column(DateTime, default=utcnow)
     responded_at = Column(DateTime, nullable=True)
+
+
+class LogEntry(Base):
+    """Persistent log entries stored in the database."""
+
+    __tablename__ = "log_entries"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    timestamp = Column(DateTime, default=utcnow, nullable=False, index=True)
+    level = Column(String(10), nullable=False, index=True)  # INFO, WARNING, ERROR, CRITICAL
+    logger_name = Column(String(100), nullable=False, index=True)  # e.g., "api", "mem0"
+    message = Column(Text, nullable=False)
+    module = Column(String(100), nullable=True)
+    function = Column(String(100), nullable=True)
+    line_number = Column(Integer, nullable=True)
+    exception = Column(Text, nullable=True)  # Traceback if error
+    extra_data = Column(Text, nullable=True)  # JSON for additional context
+    user_id = Column(String, nullable=True, index=True)
+    session_id = Column(String, nullable=True, index=True)

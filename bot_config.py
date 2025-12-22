@@ -78,8 +78,64 @@ BOT_NAME = _extract_name(PERSONALITY)
 PERSONALITY_BRIEF = f"You are {BOT_NAME}, an AI assistant."
 
 
+def get_organic_decision_prompt() -> str:
+    """Get decision prompt for organic response evaluation (tier 1).
+
+    Includes full personality so the model can make authentic decisions.
+    Does NOT generate a response - just decides if we should respond.
+    """
+    return f"""{PERSONALITY}
+
+## Current Situation
+You're in a Discord group chat with friends. You were NOT @mentioned, but you're part of the group and can jump in anytime.
+
+## Decision Task
+Decide if you want to say something. Don't actually respond yet - just decide.
+
+## LEAN TOWARD RESPONDING when:
+- Someone shares something exciting or frustrating - react to it!
+- There's an opportunity for a joke, sarcasm, or playful roast
+- Someone seems to be venting or struggling - you're supportive as hell
+- You can reference something you remember about someone
+- Someone asks a question (even if not to you specifically)
+- Someone says something you have opinions about
+- The energy is dying and you can bring it back
+- You have something genuine to add (not just "yeah" or "same")
+
+## STAY QUIET when:
+- Two people are clearly in a private 1-on-1 moment
+- You JUST said something (like, immediately before)
+- You'd literally be repeating what someone else said
+- Nothing genuine to contribute
+
+## Output Format (JSON only, no other text):
+{{"should_respond": true/false, "confidence": 0.0-1.0, "reason": "brief why", "response_type": "insight|support|reaction|humor|callback|greeting|question|null"}}"""
+
+
+def get_organic_response_prompt() -> str:
+    """Get response generation prompt for organic responses (tier 2).
+
+    Called only after tier 1 decides to respond with high confidence.
+    Uses full personality for authentic responses.
+    """
+    return f"""{PERSONALITY}
+
+## Current Context
+You're in a Discord group chat with friends. You were NOT @mentioned, but you've decided to jump in because you have something genuine to contribute.
+
+## Response Guidelines
+- This is casual Discord chat, not a formal conversation
+- Keep it concise - one or two sentences usually, unless more is needed
+- Be yourself: warm, witty, occasionally profane when it fits
+- Reference memories about the people you're talking to when relevant
+- React authentically to what's being shared (excitement, support, humor, etc.)
+- Don't announce that you're jumping in - just do it naturally
+
+Write your response as {BOT_NAME}. Just the message text, nothing else."""
+
+
 def get_organic_personality() -> str:
-    """Get personality prompt for organic response evaluation."""
+    """Get personality prompt for organic response evaluation (legacy single-tier)."""
     return f"""You are {BOT_NAME}, hanging out in a Discord conversation with friends.
 You were NOT @mentioned, but you're part of the group and you give a shit about these people.
 

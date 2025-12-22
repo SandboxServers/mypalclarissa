@@ -7,8 +7,12 @@ from pathlib import Path
 from sqlalchemy.orm import Session as OrmSession
 
 from bot_config import PERSONALITY
+from logging_config import get_logger
 from mem0_config import MEM0
 from models import Message, Session
+
+logger = get_logger("mem0")
+thread_logger = get_logger("thread")
 
 # How many messages to include in context
 CONTEXT_MESSAGE_COUNT = 20
@@ -28,7 +32,6 @@ def _has_generated_memories() -> bool:
     """Check if generated memory JSON files exist."""
     if not GENERATED_DIR.exists():
         return False
-    # Check for at least one memory file
     memory_files = ["profile_bio.json", "interaction_style.json", "project_seed.json"]
     return any((GENERATED_DIR / f).exists() for f in memory_files)
 
@@ -36,10 +39,9 @@ def _has_generated_memories() -> bool:
 def _generate_memories_from_profile() -> dict | None:
     """Generate structured memories from user_profile.txt using LLM extraction."""
     if not USER_PROFILE_PATH.exists():
-        print("[mem0] No user_profile.txt found, cannot generate memories")
+        logger.warning("No user_profile.txt found, cannot generate memories")
         return None
 
-    # Import bootstrap functions lazily to avoid circular imports
     from src.bootstrap_memory import (
         consolidate_memories,
         extract_memories_with_llm,
@@ -47,84 +49,66 @@ def _generate_memories_from_profile() -> dict | None:
         write_json_files,
     )
 
-    print("[mem0] Generating memories from user_profile.txt...")
+    logger.info("Generating memories from user_profile.txt...")
     try:
         profile_text = USER_PROFILE_PATH.read_text()
 
-        # Extract, validate, consolidate
         raw_memories = extract_memories_with_llm(profile_text)
         memories = validate_memories(raw_memories)
         memories = consolidate_memories(memories)
 
-        # Write JSON files
         write_json_files(memories, GENERATED_DIR)
 
         return memories
     except Exception as e:
-        print(f"[mem0] Error generating memories: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Error generating memories: {e}", exc_info=True)
         return None
 
 
 def load_initial_profile(user_id: str) -> None:
-    """Load initial user profile into mem0 once on first run.
-
-    Uses the bootstrap pipeline:
-    1. If generated/*.json files exist, load from them
-    2. If not, generate from inputs/user_profile.txt first
-    3. Apply structured memories to mem0 with graph-friendly grouping
-    """
+    """Load initial user profile into mem0 once on first run."""
     skip_profile = os.getenv("SKIP_PROFILE_LOAD", "true").lower() == "true"
     if skip_profile:
-        print("[mem0] Profile loading disabled (SKIP_PROFILE_LOAD=true)")
+        logger.info("Profile loading disabled (SKIP_PROFILE_LOAD=true)")
         return
 
     if MEM0 is None:
-        print("[mem0] Skipping profile load - mem0 not available")
+        logger.info("Skipping profile load - mem0 not available")
         return
 
     if PROFILE_LOADED_FLAG.exists():
-        print("[mem0] Profile already loaded (flag exists), skipping")
+        logger.debug("Profile already loaded (flag exists), skipping")
         return
 
-    # Import bootstrap functions lazily
     from src.bootstrap_memory import (
         apply_to_mem0,
         load_existing_memories,
     )
 
-    # Check for existing generated files, or generate them
     if _has_generated_memories():
-        print("[mem0] Loading from existing generated/*.json files...")
+        logger.info("Loading from existing generated/*.json files...")
         memories = load_existing_memories(GENERATED_DIR)
     else:
-        print("[mem0] No generated files found, extracting from profile...")
+        logger.info("No generated files found, extracting from profile...")
         memories = _generate_memories_from_profile()
         if not memories:
-            print("[mem0] Could not generate memories, skipping profile load")
+            logger.warning("Could not generate memories, skipping profile load")
             return
 
-    # Create flag to prevent duplicate loads
-    print("[mem0] Creating flag file to prevent duplicate loads...")
+    logger.debug("Creating flag file to prevent duplicate loads...")
     try:
         PROFILE_LOADED_FLAG.write_text(
             f"loading started at {datetime.now().isoformat()}"
         )
     except Exception as e:
-        print(f"[mem0] ERROR: Could not create flag file: {e}")
+        logger.error(f"Could not create flag file: {e}")
 
-    # Apply to mem0
     try:
         apply_to_mem0(memories, user_id)
         PROFILE_LOADED_FLAG.write_text(f"completed at {datetime.now().isoformat()}")
-        print("[mem0] Profile loaded successfully")
+        logger.info("Profile loaded successfully", extra={"user_id": user_id})
     except Exception as e:
-        print(f"[mem0] Error applying memories to mem0: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Error applying memories to mem0: {e}", exc_info=True)
 
 
 class MemoryManager:
@@ -172,7 +156,6 @@ class MemoryManager:
     def should_update_summary(self, db: OrmSession, thread_id: str) -> bool:
         """Check if thread summary should be updated."""
         msg_count = self.get_message_count(db, thread_id)
-        # Update summary every SUMMARY_INTERVAL messages
         return msg_count > 0 and msg_count % SUMMARY_INTERVAL == 0
 
     def update_thread_summary(self, db: OrmSession, thread: Session) -> str:
@@ -189,7 +172,7 @@ class MemoryManager:
 
         conversation = "\n".join(
             f"{m.role.upper()}: {m.content[:500]}"
-            for m in all_msgs[-30:]  # Last 30 messages
+            for m in all_msgs[-30:]
         )
 
         summary_prompt = [
@@ -203,7 +186,7 @@ class MemoryManager:
         summary = self.llm(summary_prompt)
         thread.session_summary = summary
         db.commit()
-        print(f"[thread] Updated summary for thread {thread.id}")
+        thread_logger.info(f"Updated summary for thread", extra={"session_id": thread.id})
         return summary
 
     # ---------- mem0 integration ----------
@@ -215,23 +198,14 @@ class MemoryManager:
         user_message: str,
         participants: list[dict] | None = None,
     ) -> tuple[list[str], list[str]]:
-        """Fetch relevant memories from mem0.
-
-        Args:
-            user_id: The user making the request
-            project_id: Project context
-            user_message: The message to search for relevant memories
-            participants: List of {"id": str, "name": str} for conversation members
-        """
+        """Fetch relevant memories from mem0."""
         if MEM0 is None:
             return [], []
 
-        # Truncate search query if too long (embedding model has token limit)
         search_query = user_message
         if len(search_query) > MAX_SEARCH_QUERY_CHARS:
-            # Keep end (most recent context) for better semantic matching
             search_query = search_query[-MAX_SEARCH_QUERY_CHARS:]
-            print(f"[mem0] Truncated search query to {MAX_SEARCH_QUERY_CHARS} chars")
+            logger.debug(f"Truncated search query to {MAX_SEARCH_QUERY_CHARS} chars")
 
         user_res = MEM0.search(search_query, user_id=user_id)
         proj_res = MEM0.search(
@@ -243,35 +217,27 @@ class MemoryManager:
         user_mems = [r["memory"] for r in user_res.get("results", [])]
         proj_mems = [r["memory"] for r in proj_res.get("results", [])]
 
-        # Also search for memories about each participant
-        # This enables cross-user memory: if User A told Clara about User B,
-        # Clara can recall that when talking to User B
         if participants:
             for p in participants:
                 p_id = p.get("id")
                 p_name = p.get("name", p_id)
                 if not p_id or p_id == user_id:
-                    continue  # Skip self
+                    continue
 
-                # Search memories stored by this user about the participant
                 try:
-                    # Search for memories mentioning this participant by name
                     p_search = MEM0.search(
-                        f"{p_name} {search_query[:500]}",  # Include name + context
+                        f"{p_name} {search_query[:500]}",
                         user_id=user_id,
                     )
                     for r in p_search.get("results", []):
                         mem = r["memory"]
-                        # Avoid duplicates
                         if mem not in user_mems:
-                            # Label with participant info for clarity
                             labeled_mem = f"[About {p_name}]: {mem}"
                             if labeled_mem not in user_mems:
                                 user_mems.append(labeled_mem)
                 except Exception as e:
-                    print(f"[mem0] Error searching participant {p_id}: {e}")
+                    logger.warning(f"Error searching participant {p_id}: {e}")
 
-        # Extract contact-related memories with source info
         for r in user_res.get("results", []):
             metadata = r.get("metadata", {})
             if metadata.get("contact_id"):
@@ -281,8 +247,9 @@ class MemoryManager:
                     user_mems.append(mem_text)
 
         if user_mems or proj_mems:
-            print(
-                f"[mem0] Found {len(user_mems)} user memories, {len(proj_mems)} project memories"
+            logger.info(
+                f"Found {len(user_mems)} user memories, {len(proj_mems)} project memories",
+                extra={"user_id": user_id}
             )
         return user_mems, proj_mems
 
@@ -295,20 +262,10 @@ class MemoryManager:
         assistant_reply: str,
         participants: list[dict] | None = None,
     ) -> None:
-        """Send conversation slice to mem0 for memory extraction.
-
-        Args:
-            user_id: The user ID for memory storage
-            project_id: Project context
-            recent_msgs: Recent message history
-            user_message: Current user message
-            assistant_reply: Clara's response
-            participants: List of {"id": str, "name": str} for people mentioned
-        """
+        """Send conversation slice to mem0 for memory extraction."""
         if MEM0 is None:
             return
 
-        # Build context with participant names for better extraction
         context_prefix = ""
         if participants:
             names = [p.get("name", p.get("id", "Unknown")) for p in participants]
@@ -321,10 +278,8 @@ class MemoryManager:
             {"role": "assistant", "content": assistant_reply},
         ]
 
-        # Store with participant metadata for cross-user search
         metadata = {"project_id": project_id}
         if participants:
-            # Store participant IDs for cross-reference
             metadata["participant_ids"] = [
                 p.get("id") for p in participants if p.get("id")
             ]
@@ -337,7 +292,7 @@ class MemoryManager:
             user_id=user_id,
             metadata=metadata,
         )
-        print(f"[mem0] Added memories: {result}")
+        logger.debug(f"Added memories: {result}", extra={"user_id": user_id})
 
     # ---------- prompt building ----------
 
@@ -351,7 +306,6 @@ class MemoryManager:
     ) -> list[dict[str, str]]:
         """Build the full prompt for the LLM."""
 
-        # Build context sections
         context_parts = []
 
         if user_mems:

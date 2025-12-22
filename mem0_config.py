@@ -6,7 +6,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from mem0 import Memory
 
+from logging_config import get_logger
+
 load_dotenv()
+
+logger = get_logger("mem0")
 
 # Mem0 has its own independent provider config (separate from chat LLM)
 MEM0_PROVIDER = os.getenv("MEM0_PROVIDER", "openrouter").lower()
@@ -40,7 +44,6 @@ PROVIDER_DEFAULTS = {
 }
 
 # IMPORTANT: mem0 auto-detects these env vars and overrides our config!
-# We must save and clear them before mem0 initialization, then restore after.
 _saved_env_vars = {}
 _env_vars_to_clear = [
     "OPENROUTER_API_KEY",
@@ -55,14 +58,14 @@ def _clear_mem0_env_vars():
     for var in _env_vars_to_clear:
         if var in os.environ:
             _saved_env_vars[var] = os.environ.pop(var)
-            print(f"[mem0] Temporarily cleared {var} to prevent auto-detection")
+            logger.debug(f"Temporarily cleared {var} to prevent auto-detection")
 
 
 def _restore_env_vars():
     """Restore cleared env vars after mem0 initialization."""
     for var, value in _saved_env_vars.items():
         os.environ[var] = value
-        print(f"[mem0] Restored {var}")
+        logger.debug(f"Restored {var}")
 
 
 # Store mem0 data in a local directory
@@ -77,11 +80,7 @@ if not MEM0_DATABASE_URL:
     QDRANT_DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 # Graph memory configuration (optional - for relationship tracking)
-# Master toggle - set to "true" to enable graph memory (disabled by default)
 ENABLE_GRAPH_MEMORY = os.getenv("ENABLE_GRAPH_MEMORY", "false").lower() == "true"
-
-# Supported providers: "neo4j", "kuzu" (embedded)
-# Only used when ENABLE_GRAPH_MEMORY is true
 GRAPH_STORE_PROVIDER = os.getenv("GRAPH_STORE_PROVIDER", "neo4j").lower()
 
 # Neo4j configuration (if using neo4j provider)
@@ -96,27 +95,18 @@ if GRAPH_STORE_PROVIDER == "kuzu":
 
 
 def _get_graph_store_config() -> dict | None:
-    """
-    Build graph store config for relationship tracking.
-
-    Graph memory enables tracking relationships between people, places, events.
-    Supports:
-    - neo4j: Requires external Neo4j server or Neo4j Aura (free tier available)
-    - kuzu: Embedded graph database, no external server needed
-
-    Controlled by ENABLE_GRAPH_MEMORY env var (default: false).
-    """
+    """Build graph store config for relationship tracking."""
     if not ENABLE_GRAPH_MEMORY:
         return None
 
     if GRAPH_STORE_PROVIDER == "neo4j":
         if not NEO4J_URL or not NEO4J_PASSWORD:
-            print(
-                "[mem0] Graph store: Neo4j configured but NEO4J_URL or NEO4J_PASSWORD not set"
+            logger.warning(
+                "Graph store: Neo4j configured but NEO4J_URL or NEO4J_PASSWORD not set"
             )
             return None
 
-        print(f"[mem0] Graph store: Neo4j at {NEO4J_URL}")
+        logger.info(f"Graph store: Neo4j at {NEO4J_URL}")
         return {
             "provider": "neo4j",
             "config": {
@@ -127,7 +117,7 @@ def _get_graph_store_config() -> dict | None:
         }
 
     elif GRAPH_STORE_PROVIDER == "kuzu":
-        print(f"[mem0] Graph store: Kuzu (embedded) at {KUZU_DATA_DIR}")
+        logger.info(f"Graph store: Kuzu (embedded) at {KUZU_DATA_DIR}")
         return {
             "provider": "kuzu",
             "config": {
@@ -136,36 +126,30 @@ def _get_graph_store_config() -> dict | None:
         }
 
     else:
-        print(f"[mem0] Unknown GRAPH_STORE_PROVIDER={GRAPH_STORE_PROVIDER}")
+        logger.warning(f"Unknown GRAPH_STORE_PROVIDER={GRAPH_STORE_PROVIDER}")
         return None
 
 
 def _get_llm_config() -> dict | None:
-    """
-    Build mem0 LLM config based on MEM0_PROVIDER.
-
-    This is completely independent from the chat LLM provider.
-    """
+    """Build mem0 LLM config based on MEM0_PROVIDER."""
     if MEM0_PROVIDER not in PROVIDER_DEFAULTS:
-        print(f"[mem0] Unknown MEM0_PROVIDER={MEM0_PROVIDER} - mem0 LLM disabled")
+        logger.warning(f"Unknown MEM0_PROVIDER={MEM0_PROVIDER} - mem0 LLM disabled")
         return None
 
     provider_config = PROVIDER_DEFAULTS[MEM0_PROVIDER]
 
-    # Get API key: explicit MEM0_API_KEY > provider's default key
     api_key = MEM0_API_KEY or os.getenv(provider_config["api_key_env"])
     if not api_key:
-        print(
-            f"[mem0] No API key found for MEM0_PROVIDER={MEM0_PROVIDER} - mem0 LLM disabled"
+        logger.warning(
+            f"No API key found for MEM0_PROVIDER={MEM0_PROVIDER} - mem0 LLM disabled"
         )
         return None
 
-    # Get base URL: explicit MEM0_BASE_URL > provider's default URL
     base_url = MEM0_BASE_URL or provider_config["base_url"]
 
-    print(f"[mem0] Provider: {MEM0_PROVIDER}")
-    print(f"[mem0] Model: {MEM0_MODEL}")
-    print(f"[mem0] Base URL: {base_url}")
+    logger.info(f"Provider: {MEM0_PROVIDER}")
+    logger.info(f"Model: {MEM0_MODEL}")
+    logger.debug(f"Base URL: {base_url}")
 
     return {
         "provider": "openai",
@@ -284,8 +268,6 @@ OUTPUT FORMAT (JSON only):
 
 # Build vector store config - pgvector for production, Qdrant for local dev
 if MEM0_DATABASE_URL:
-    # PostgreSQL with pgvector
-    # Fix postgres:// vs postgresql:// prefix
     pgvector_url = MEM0_DATABASE_URL
     if pgvector_url.startswith("postgres://"):
         pgvector_url = pgvector_url.replace("postgres://", "postgresql://", 1)
@@ -297,9 +279,9 @@ if MEM0_DATABASE_URL:
             "collection_name": "clara_memories",
         },
     }
-    print(f"[mem0] Vector store: pgvector at {pgvector_url.split('@')[1] if '@' in pgvector_url else 'configured'}")
+    db_display = pgvector_url.split("@")[1] if "@" in pgvector_url else "configured"
+    logger.info(f"Vector store: pgvector at {db_display}")
 else:
-    # Fallback to Qdrant for local development
     vector_store_config = {
         "provider": "qdrant",
         "config": {
@@ -307,14 +289,10 @@ else:
             "path": str(QDRANT_DATA_DIR),
         },
     }
-    print(f"[mem0] Vector store: Qdrant at {QDRANT_DATA_DIR}")
+    logger.info(f"Vector store: Qdrant at {QDRANT_DATA_DIR}")
 
 # Build config - embeddings always use OpenAI
-# NOTE: Custom prompts disabled - they break both vector AND graph extraction
-# mem0's default prompts work better with graph entity extraction
 config = {
-    # "custom_prompt": CUSTOM_EXTRACTION_PROMPT,
-    # "custom_update_memory_prompt": CUSTOM_UPDATE_PROMPT,
     "vector_store": vector_store_config,
     "embedder": {
         "provider": "openai",
@@ -332,16 +310,15 @@ if llm_config:
 # Add graph store config if configured
 if graph_store_config:
     config["graph_store"] = graph_store_config
-    # Give graph store its own LLM config (same provider, no custom prompts)
     if llm_config:
         config["graph_store"]["llm"] = llm_config.copy()
 
 # Debug summary
-print("[mem0] Embeddings: OpenAI text-embedding-3-small")
+logger.info("Embeddings: OpenAI text-embedding-3-small")
 if graph_store_config:
-    print(f"[mem0] Graph memory: ENABLED ({GRAPH_STORE_PROVIDER})")
+    logger.info(f"Graph memory: ENABLED ({GRAPH_STORE_PROVIDER})")
 else:
-    print("[mem0] Graph memory: DISABLED (set ENABLE_GRAPH_MEMORY=true to enable)")
+    logger.debug("Graph memory: DISABLED (set ENABLE_GRAPH_MEMORY=true to enable)")
 
 # Initialize mem0 (synchronous version)
 MEM0: Memory | None = None
@@ -350,17 +327,17 @@ MEM0: Memory | None = None
 def _init_mem0() -> Memory | None:
     """Initialize mem0 synchronously."""
     if not OPENAI_API_KEY:
-        print("[mem0] OPENAI_API_KEY not set - mem0 disabled (no embeddings)")
+        logger.warning("OPENAI_API_KEY not set - mem0 disabled (no embeddings)")
         return None
 
     try:
         _clear_mem0_env_vars()
         mem0 = Memory.from_config(config)
-        print("[mem0] Memory initialized successfully")
+        logger.info("Memory initialized successfully")
         return mem0
     except Exception as e:
-        print(f"[mem0] WARNING: Failed to initialize Memory: {e}")
-        print("[mem0] App will run without memory features")
+        logger.error(f"Failed to initialize Memory: {e}", exc_info=True)
+        logger.warning("App will run without memory features")
         return None
     finally:
         _restore_env_vars()

@@ -10,10 +10,10 @@ import asyncio
 import json
 import os
 from collections import defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from bot_config import get_organic_personality
+from bot_config import get_organic_decision_prompt, get_organic_personality, get_organic_response_prompt
 from db import SessionLocal
 from models import OrganicResponseLog
 
@@ -27,7 +27,10 @@ EXCLUDED_CHANNELS = [
     for x in os.getenv("ORGANIC_EXCLUDED_CHANNELS", "").split(",")
     if x.strip()
 ]
-QUIET_HOURS = (23, 7)  # 11pm - 7am
+# Quiet hours: disable organic responses during certain hours (e.g., nighttime)
+QUIET_HOURS_ENABLED = os.getenv("ORGANIC_QUIET_HOURS_ENABLED", "false").lower() == "true"
+QUIET_HOURS_START = int(os.getenv("ORGANIC_QUIET_HOURS_START", "23"))  # 11pm
+QUIET_HOURS_END = int(os.getenv("ORGANIC_QUIET_HOURS_END", "7"))  # 7am
 
 
 @dataclass
@@ -40,6 +43,7 @@ class BufferedMessage:
     timestamp: datetime
     message_id: int
     channel_name: str
+    images: list[str] = field(default_factory=list)
 
 
 class MessageBuffer:
@@ -73,7 +77,13 @@ class MessageBuffer:
         lines = []
         for m in recent:
             ts = m.timestamp.strftime("%H:%M")
-            lines.append(f"[{ts}] {m.author}: {m.content}")
+            content = m.content
+            # Indicate images/GIFs in the text
+            if m.images:
+                img_count = len(m.images)
+                img_note = f" [shared {img_count} image{'s' if img_count > 1 else ''}/GIF]"
+                content += img_note
+            lines.append(f"[{ts}] {m.author}: {content}")
         return "\n".join(lines)
 
 
@@ -175,8 +185,12 @@ class OrganicResponseManager:
 
         return False
 
-    def record_message(self, message) -> str | None:
+    def record_message(self, message, images: list[str] | None = None) -> str | None:
         """Record a message and check if evaluation should trigger.
+
+        Args:
+            message: Discord message object
+            images: Optional list of image URLs extracted from the message
 
         Returns trigger reason if evaluation was queued, None otherwise.
         """
@@ -197,6 +211,7 @@ class OrganicResponseManager:
                 timestamp=message.created_at.replace(tzinfo=UTC),
                 message_id=message.id,
                 channel_name=getattr(message.channel, "name", "DM"),
+                images=images or [],
             ),
         )
 
@@ -296,8 +311,10 @@ class OrganicResponseManager:
 
     def is_quiet_hours(self) -> bool:
         """Check if we're in quiet hours (no organic responses)."""
+        if not QUIET_HOURS_ENABLED:
+            return False
         hour = datetime.now().hour
-        start, end = QUIET_HOURS
+        start, end = QUIET_HOURS_START, QUIET_HOURS_END
         if start > end:  # Crosses midnight
             return hour >= start or hour < end
         return start <= hour < end
@@ -305,7 +322,7 @@ class OrganicResponseManager:
     def build_evaluation_prompt(
         self, formatted_msgs: str, memories: str
     ) -> list[dict]:
-        """Build the evaluation prompt for Claude."""
+        """Build the evaluation prompt for Claude (legacy single-tier)."""
         system = get_organic_personality()
 
         user_content = f"""## Recent Conversation:
@@ -315,6 +332,58 @@ class OrganicResponseManager:
 {memories}
 
 Evaluate whether to respond. Output JSON only."""
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ]
+
+    def build_decision_prompt(
+        self, formatted_msgs: str, memories: str
+    ) -> list[dict]:
+        """Build fast decision-only prompt (tier 1).
+
+        Uses a compact prompt for quick should_respond decisions.
+        Does not generate a response.
+        """
+        system = get_organic_decision_prompt()
+
+        # Keep context compact for speed
+        user_content = f"""Chat:
+{formatted_msgs}
+
+Memories:
+{memories}"""
+
+        return [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_content},
+        ]
+
+    def build_response_prompt(
+        self, formatted_msgs: str, memories: str, response_type: str
+    ) -> list[dict]:
+        """Build response generation prompt (tier 2).
+
+        Called only after tier 1 decides to respond with high confidence.
+        Uses full personality and rich context.
+        """
+        system = get_organic_response_prompt()
+
+        # Build context block similar to direct messages
+        context_parts = []
+        if memories and memories != "No relevant memories.":
+            context_parts.append(f"## What You Remember About These People:\n{memories}")
+
+        context_block = "\n\n".join(context_parts) if context_parts else ""
+
+        user_content = f"""## Recent Discord Chat:
+{formatted_msgs}
+
+{context_block}
+
+## Your Intent: {response_type}
+(React naturally - don't mention this label)"""
 
         return [
             {"role": "system", "content": system},

@@ -41,7 +41,7 @@ from fastapi.responses import HTMLResponse
 
 from db import SessionLocal, init_db
 from docker_tools import DOCKER_TOOLS, get_sandbox_manager
-from llm_backends import make_llm, make_llm_with_tools
+from llm_backends import make_fast_llm, make_llm, make_llm_with_tools
 from local_files import LOCAL_FILE_TOOLS, get_file_manager
 from memory_manager import MemoryManager
 from email_monitor import EMAIL_TOOLS, handle_email_tool, email_check_loop, get_email_monitor
@@ -291,6 +291,7 @@ class ClaraDiscordBot(discord.Client):
 
         # Initialize organic response system
         self.organic_manager = OrganicResponseManager(self)
+        self._active_t1_evaluations: set[int] = set()  # Track active T1 evaluations
 
     def _sync_llm(self, messages: list[dict]) -> str:
         """Synchronous LLM call for MemoryManager."""
@@ -586,6 +587,55 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
 
         return attachments
 
+    def _extract_images(self, message: DiscordMessage) -> list[str]:
+        """Extract image URLs from message content, embeds, and attachments.
+
+        Handles:
+        - Tenor GIF links (tenor.com)
+        - Giphy links (giphy.com)
+        - Discord embeds with images/thumbnails
+        - Image attachments (png, jpg, gif, webp)
+        """
+        images = []
+        seen_urls = set()
+
+        def add_image(url: str):
+            if url and url not in seen_urls:
+                seen_urls.add(url)
+                images.append(url)
+
+        # Extract Tenor/Giphy links from message content
+        tenor_pattern = r'https?://(?:www\.)?tenor\.com/view/[^\s<>]+'
+        giphy_pattern = r'https?://(?:www\.)?(?:media\.)?giphy\.com/[^\s<>]+'
+
+        for match in re.finditer(tenor_pattern, message.content):
+            add_image(match.group(0))
+        for match in re.finditer(giphy_pattern, message.content):
+            add_image(match.group(0))
+
+        # Extract from Discord embeds
+        for embed in message.embeds:
+            # Embed image (main image)
+            if embed.image and embed.image.url:
+                add_image(embed.image.url)
+            # Embed thumbnail
+            if embed.thumbnail and embed.thumbnail.url:
+                add_image(embed.thumbnail.url)
+            # Video thumbnail (for Tenor/Giphy embeds)
+            if embed.video and embed.video.url:
+                # Discord often has a proxy URL for the actual GIF
+                if embed.thumbnail and embed.thumbnail.proxy_url:
+                    add_image(embed.thumbnail.proxy_url)
+
+        # Extract image attachments
+        image_extensions = {'.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp'}
+        for attachment in message.attachments:
+            ext = '.' + attachment.filename.lower().split('.')[-1] if '.' in attachment.filename else ''
+            if ext in image_extensions:
+                add_image(attachment.url)
+
+        return images
+
     async def on_ready(self):
         """Called when bot is ready."""
         print(f"\n{C.GREEN}[discord]{C.RESET} {C.BOLD}Logged in as {C.CYAN}{self.user}{C.RESET}")
@@ -630,8 +680,11 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
         if message.author.bot:
             return
 
+        # Extract images for organic response context
+        message_images = self._extract_images(message)
+
         # Record ALL messages for organic response buffer (before mention check)
-        trigger = self.organic_manager.record_message(message)
+        trigger = self.organic_manager.record_message(message, images=message_images)
         if trigger:
             print(f"[organic] Trigger: {trigger} in #{getattr(message.channel, 'name', 'DM')}")
 
@@ -804,12 +857,38 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
                             content = f"[{msg.username}]: {msg.content}"
                         else:
                             content = msg.content
-                        channel_context.append({"role": role, "content": content})
+
+                        # Include images from context messages (vision format)
+                        if msg.images and not msg.is_bot:
+                            content_parts = [{"type": "text", "text": content}]
+                            for img_url in msg.images[:3]:  # Limit to 3 images per message
+                                content_parts.append({
+                                    "type": "image_url",
+                                    "image_url": {"url": img_url}
+                                })
+                            channel_context.append({"role": role, "content": content_parts})
+                        else:
+                            channel_context.append({"role": role, "content": content})
 
                     # Insert before the last user message
                     prompt_messages = (
                         prompt_messages[:-1] + channel_context + [prompt_messages[-1]]
                     )
+
+                # Extract images from current message and convert to vision format
+                current_images = self._extract_images(message)
+                if current_images:
+                    last_msg = prompt_messages[-1]
+                    if last_msg["role"] == "user":
+                        text_content = last_msg["content"]
+                        content_parts = [{"type": "text", "text": text_content}]
+                        for img_url in current_images[:5]:  # Limit to 5 images
+                            content_parts.append({
+                                "type": "image_url",
+                                "image_url": {"url": img_url}
+                            })
+                        prompt_messages[-1] = {"role": "user", "content": content_parts}
+                        print(f"[discord] Added {len(current_images)} image(s) to prompt")
 
                 # Debug: check Docker sandbox status
                 docker_available = DOCKER_ENABLED and get_sandbox_manager().is_available()
@@ -898,8 +977,12 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
             if len(content) > MAX_CHARS:
                 content = content[:MAX_CHARS] + "... [truncated]"
 
+            # Extract images from embeds/attachments
+            images = self._extract_images(message)
+
             cached = CachedMessage(
                 content=content,
+                images=images,
                 user_id=str(message.author.id),
                 username=message.author.display_name,
                 is_bot=message.author.bot,
@@ -1347,6 +1430,20 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
 
                     # Remove the tool instruction we added
                     original_messages = [m for m in messages if m.get("content") != tool_instruction["content"]]
+
+                    # Debug: show message structure
+                    print(f"{C.BLUE}[discord]{C.RESET} Sending {len(original_messages)} messages to main LLM")
+                    for i, msg in enumerate(original_messages[-3:]):  # Last 3 messages
+                        role = msg.get("role", "?")
+                        content = msg.get("content", "")
+                        if isinstance(content, list):
+                            # Vision format
+                            text_parts = [p.get("text", "")[:50] for p in content if p.get("type") == "text"]
+                            img_count = sum(1 for p in content if p.get("type") == "image_url")
+                            preview = f"[vision: {text_parts}, {img_count} imgs]"
+                        else:
+                            preview = content[:80] if content else "(empty)"
+                        print(f"  [{i}] {role}: {preview}...")
 
                     def main_llm_call():
                         llm = make_llm()
@@ -1935,115 +2032,171 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
     # ---------- Organic Response System ----------
 
     async def _organic_evaluation_loop(self):
-        """Background task to process organic response evaluations."""
+        """Background task to spawn T1 evaluations as non-blocking tasks."""
         await self.wait_until_ready()
-        print("[organic] Evaluation loop started")
+        print("[organic] Async evaluation loop started")
 
         while not self.is_closed():
-            if self.organic_manager.pending_evaluation:
-                # Pop one channel_id -> trigger_reason pair
+            # Process all pending evaluations, spawning each as a background task
+            while self.organic_manager.pending_evaluation:
                 channel_id, trigger_reason = self.organic_manager.pending_evaluation.popitem()
+
+                # Skip if this channel already has an active T1 evaluation
+                if channel_id in self._active_t1_evaluations:
+                    continue
+
                 channel = self.get_channel(channel_id)
                 if channel:
-                    try:
-                        await self._evaluate_organic_response(channel, trigger_reason)
-                    except Exception as e:
-                        print(f"[organic] Evaluation error: {e}")
-                        import traceback
-                        traceback.print_exc()
+                    # Spawn T1 as a background task (non-blocking)
+                    self._active_t1_evaluations.add(channel_id)
+                    asyncio.create_task(
+                        self._run_t1_evaluation(channel, trigger_reason)
+                    )
 
-            await asyncio.sleep(3)  # Check every 3 seconds (more responsive)
+            await asyncio.sleep(0.5)  # Check frequently, but tasks run independently
 
-    async def _evaluate_organic_response(self, channel, trigger_reason: str = "unknown"):
-        """Evaluate and potentially send organic response."""
+    async def _run_t1_evaluation(self, channel, trigger_reason: str):
+        """Run T1 (fast decision) as a background task. Spawns T2 if confident."""
         channel_id = channel.id
         channel_name = getattr(channel, "name", "DM")
 
-        # Contextual replies bypass cooldown (someone responding to Flo)
-        bypass_cooldown = trigger_reason == "contextual_reply"
-        if bypass_cooldown:
-            print(f"[organic] #{channel_name}: contextual reply detected, bypassing cooldown")
-
-        # Rate limit check
-        can_respond, limit_reason = self.organic_manager.limiter.can_respond(
-            channel_id, bypass_cooldown=bypass_cooldown
-        )
-        if not can_respond:
-            print(f"[organic] Skipping #{channel_name}: {limit_reason}")
-            return
-
-        # Quiet hours check (but contextual replies still go through)
-        if self.organic_manager.is_quiet_hours() and not bypass_cooldown:
-            print(f"[organic] Skipping #{channel_name}: quiet hours")
-            return
-
-        # Get context
-        formatted = self.organic_manager.buffer.get_formatted(channel_id, count=20)
-        if len(formatted) < 50:  # Not enough context
-            return
-
-        # Get participant memories
-        recent = self.organic_manager.buffer.get_recent(channel_id, count=10)
-        participant_ids = list(set(m.author_id for m in recent))
-
-        # Fetch memories (reuse existing memory manager)
-        memories_text = "No relevant memories."
         try:
-            user_id = participant_ids[0] if participant_ids else "organic"
-            project_id = f"discord-{channel.guild.id if channel.guild else 'dm'}"
-            user_mems, proj_mems = self.mm.fetch_mem0_context(
-                user_id, project_id, formatted[:500]
+            # Contextual replies bypass cooldown
+            bypass_cooldown = trigger_reason == "contextual_reply"
+            if bypass_cooldown:
+                print(f"[organic] #{channel_name}: contextual reply, bypassing cooldown")
+
+            # Rate limit check
+            can_respond, limit_reason = self.organic_manager.limiter.can_respond(
+                channel_id, bypass_cooldown=bypass_cooldown
             )
-            if user_mems or proj_mems:
-                memories_text = "\n".join(user_mems + proj_mems)
+            if not can_respond:
+                print(f"[organic] Skipping #{channel_name}: {limit_reason}")
+                return
+
+            # Quiet hours check
+            if self.organic_manager.is_quiet_hours() and not bypass_cooldown:
+                print(f"[organic] Skipping #{channel_name}: quiet hours")
+                return
+
+            # Get context
+            formatted = self.organic_manager.buffer.get_formatted(channel_id, count=20)
+            if len(formatted) < 50:
+                return
+
+            # Get participant memories
+            recent = self.organic_manager.buffer.get_recent(channel_id, count=10)
+            participant_ids = list(set(m.author_id for m in recent))
+
+            memories_text = "No relevant memories."
+            try:
+                user_id = participant_ids[0] if participant_ids else "organic"
+                project_id = f"discord-{channel.guild.id if channel.guild else 'dm'}"
+                user_mems, proj_mems = self.mm.fetch_mem0_context(
+                    user_id, project_id, formatted[:500]
+                )
+                if user_mems or proj_mems:
+                    memories_text = "\n".join(user_mems + proj_mems)
+            except Exception as e:
+                print(f"[organic] Memory fetch error: {e}")
+
+            guild_id = str(channel.guild.id) if channel.guild else None
+
+            # ===== TIER 1: Fast decision =====
+            decision_prompt = self.organic_manager.build_decision_prompt(
+                formatted, memories_text
+            )
+
+            loop = asyncio.get_event_loop()
+            fast_llm = make_fast_llm()
+            raw_decision = await loop.run_in_executor(None, fast_llm, decision_prompt)
+
+            decision = self.organic_manager.parse_evaluation(raw_decision)
+            should_respond = decision.get("should_respond", False)
+            confidence = decision.get("confidence", 0)
+            response_type = decision.get("response_type", "reaction")
+
+            print(
+                f"[organic] #{channel_name} T1: respond={should_respond}, "
+                f"conf={confidence:.2f}, reason={decision.get('reason', 'N/A')}"
+            )
+
+            # Record evaluation time
+            self.organic_manager.record_evaluation(channel_id)
+
+            # If not responding, log and exit
+            if not should_respond or confidence < CONFIDENCE_THRESHOLD:
+                self.organic_manager.log_evaluation(
+                    channel_id=channel_id,
+                    channel_name=channel_name,
+                    guild_id=guild_id,
+                    trigger_reason=trigger_reason,
+                    context=formatted,
+                    result=decision,
+                    response_sent=False,
+                )
+                return
+
+            # ===== Spawn T2 as another background task =====
+            asyncio.create_task(
+                self._run_t2_response(
+                    channel, formatted, memories_text, response_type,
+                    decision, trigger_reason, guild_id
+                )
+            )
+
         except Exception as e:
-            print(f"[organic] Memory fetch error: {e}")
+            print(f"[organic] T1 error #{channel_name}: {e}")
+            import traceback
+            traceback.print_exc()
+        finally:
+            # Always remove from active set when T1 completes
+            self._active_t1_evaluations.discard(channel_id)
 
-        # Build and call evaluation prompt
-        eval_prompt = self.organic_manager.build_evaluation_prompt(
-            formatted, memories_text
-        )
+    async def _run_t2_response(
+        self, channel, formatted: str, memories_text: str,
+        response_type: str, t1_decision: dict, trigger_reason: str, guild_id: str | None
+    ):
+        """Run T2 (full response generation) as a background task."""
+        channel_id = channel.id
+        channel_name = getattr(channel, "name", "DM")
 
-        loop = asyncio.get_event_loop()
-        llm = make_llm()
-        raw_result = await loop.run_in_executor(None, llm, eval_prompt)
+        try:
+            print(f"[organic] #{channel_name} T2: generating response...")
 
-        result = self.organic_manager.parse_evaluation(raw_result)
-        print(
-            f"[organic] #{channel_name}: respond={result.get('should_respond')}, "
-            f"conf={result.get('confidence', 0):.2f}, reason={result.get('reason', 'N/A')}"
-        )
+            response_prompt = self.organic_manager.build_response_prompt(
+                formatted, memories_text, response_type
+            )
 
-        # Decide whether to respond
-        should_send = (
-            result.get("should_respond")
-            and result.get("confidence", 0) >= CONFIDENCE_THRESHOLD
-            and result.get("draft_response")
-        )
+            loop = asyncio.get_event_loop()
+            full_llm = make_llm()
+            draft_response = await loop.run_in_executor(None, full_llm, response_prompt)
 
-        guild_id = str(channel.guild.id) if channel.guild else None
+            # Clean up response
+            draft_response = draft_response.strip().strip('"').strip()
 
-        if should_send:
-            draft = result["draft_response"]
-            await channel.send(draft)
-            self.organic_manager.limiter.record_response(channel_id)
-            # Record what Flo said for contextual reply detection
-            self.organic_manager.record_bot_message(channel_id, draft)
-            print(f"[organic] Sent response to #{channel_name}: {draft[:50]}...")
+            if draft_response:
+                await channel.send(draft_response)
+                self.organic_manager.limiter.record_response(channel_id)
+                self.organic_manager.record_bot_message(channel_id, draft_response)
+                print(f"[organic] Sent to #{channel_name}: {draft_response[:50]}...")
 
-        # Record that we evaluated (for eval cooldown)
-        self.organic_manager.record_evaluation(channel_id)
+            # Log to database
+            result_with_draft = {**t1_decision, "draft_response": draft_response}
+            self.organic_manager.log_evaluation(
+                channel_id=channel_id,
+                channel_name=channel_name,
+                guild_id=guild_id,
+                trigger_reason=trigger_reason,
+                context=formatted,
+                result=result_with_draft,
+                response_sent=bool(draft_response),
+            )
 
-        # Log to database
-        self.organic_manager.log_evaluation(
-            channel_id=channel_id,
-            channel_name=channel_name,
-            guild_id=guild_id,
-            trigger_reason=trigger_reason,
-            context=formatted,
-            result=result,
-            response_sent=should_send,
-        )
+        except Exception as e:
+            print(f"[organic] T2 error #{channel_name}: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 # ============== FastAPI Monitor Dashboard ==============

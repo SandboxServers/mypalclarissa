@@ -11,12 +11,15 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from db import init_db, SessionLocal
+from db import SessionLocal
+from logging_config import get_logger
 from models import Project, Session, Message
 from memory_manager import MemoryManager, load_initial_profile
 from llm_backends import make_llm
 
 load_dotenv()
+
+logger = get_logger("api")
 
 USER_ID = os.getenv("USER_ID", "demo-user")
 DEFAULT_PROJECT = os.getenv("DEFAULT_PROJECT", "Default Project")
@@ -28,24 +31,21 @@ app = FastAPI(title="MyPalClara API")
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Log validation errors before returning 422."""
     body = await request.body()
-    print(f"[api] Validation error!")
-    print(f"[api] URL: {request.url}")
-    print(f"[api] Body: {body}")
-    print(f"[api] Errors: {exc.errors()}")
+    logger.warning(
+        f"Validation error on {request.url}",
+        extra={"path": str(request.url), "body": str(body)[:200], "errors": str(exc.errors())[:500]}
+    )
     return JSONResponse(
         status_code=422,
         content={"detail": exc.errors()},
     )
 
 # CORS for frontend - allow all origins in Docker for LAN access
-# You can restrict this by setting CORS_ORIGINS env var (comma-separated)
 cors_origins_env = os.getenv("CORS_ORIGINS", "")
 if cors_origins_env:
     cors_origins = [o.strip() for o in cors_origins_env.split(",")]
     allow_creds = True
 else:
-    # Default: allow all origins for easier LAN access
-    # Note: credentials must be False when using wildcard origins
     cors_origins = ["*"]
     allow_creds = False
 
@@ -67,14 +67,14 @@ class ChatMessage(BaseModel):
 
 class ContextRequest(BaseModel):
     message: str
-    thread_id: str = None  # Optional: use specific thread
+    thread_id: str = None
     project: str = DEFAULT_PROJECT
 
 
 class StoreRequest(BaseModel):
     user_message: str
     assistant_message: str
-    thread_id: str = None  # Optional: use specific thread
+    thread_id: str = None
     project: str = DEFAULT_PROJECT
 
 
@@ -99,16 +99,14 @@ class ChatRequest(BaseModel):
 def startup():
     """Initialize database and memory manager on startup."""
     global mm
-    print("[api] Starting up...")
-    init_db()
-    print("[api] Database initialized")
+    logger.info("Starting up...")
     llm = make_llm()
-    print("[api] LLM created")
+    logger.info("LLM created")
     mm = MemoryManager(llm_callable=llm)
-    print("[api] MemoryManager initialized")
+    logger.info("MemoryManager initialized")
     load_initial_profile(USER_ID)
-    print("[api] Initial profile loaded")
-    print("[api] Ready to accept requests on http://localhost:8000")
+    logger.info("Initial profile loaded")
+    logger.info("Ready to accept requests on http://localhost:8000")
 
 
 def ensure_project(name: str) -> str:
@@ -129,12 +127,11 @@ def ensure_project(name: str) -> str:
 @app.post("/api/context")
 def get_context(request: ContextRequest):
     """Get enriched context for a message (system prompt + memories)."""
-    print(f"[api] /api/context called with message: {request.message[:50]}...")
+    logger.info(f"GET /api/context: {request.message[:50]}...", extra={"user_id": USER_ID})
     project_id = ensure_project(request.project or DEFAULT_PROJECT)
 
     db = SessionLocal()
     try:
-        # Thread must be specified
         if not request.thread_id:
             raise HTTPException(status_code=400, detail="thread_id is required")
 
@@ -144,12 +141,10 @@ def get_context(request: ContextRequest):
 
         recent_msgs = mm.get_recent_messages(db, thread.id)
 
-        # Get mem0 memories
         user_mems, proj_mems = mm.fetch_mem0_context(
             USER_ID, project_id, request.message
         )
 
-        # Build the full prompt
         prompt_messages = mm.build_prompt(
             user_mems,
             proj_mems,
@@ -173,7 +168,6 @@ def store_messages(request: StoreRequest):
 
     db = SessionLocal()
     try:
-        # Thread must be specified
         if not request.thread_id:
             raise HTTPException(status_code=400, detail="thread_id is required")
 
@@ -183,12 +177,10 @@ def store_messages(request: StoreRequest):
 
         recent_msgs = mm.get_recent_messages(db, thread.id)
 
-        # Store messages
         mm.store_message(db, thread.id, USER_ID, "user", request.user_message)
         mm.store_message(db, thread.id, USER_ID, "assistant", request.assistant_message)
         thread.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Auto-generate title from first user message if not set
         if not thread.title and request.user_message:
             title = request.user_message[:50]
             if len(request.user_message) > 50:
@@ -197,11 +189,9 @@ def store_messages(request: StoreRequest):
 
         db.commit()
 
-        # Update thread summary periodically
         if mm.should_update_summary(db, thread.id):
             mm.update_thread_summary(db, thread)
 
-        # Add to mem0
         mm.add_to_mem0(
             USER_ID, project_id, recent_msgs,
             request.user_message, request.assistant_message
@@ -214,16 +204,12 @@ def store_messages(request: StoreRequest):
 
 @app.post("/api/chat")
 def chat(request: ChatRequest):
-    """
-    Chat endpoint for web UI.
-    Gets context, calls LLM, stores messages, returns response.
-    """
-    print(f"[api] /api/chat: {request.message[:50]}...")
+    """Chat endpoint for web UI."""
+    logger.info(f"POST /api/chat: {request.message[:50]}...", extra={"user_id": USER_ID})
     project_id = ensure_project(request.project or DEFAULT_PROJECT)
 
     db = SessionLocal()
     try:
-        # Thread must be specified
         if not request.thread_id:
             raise HTTPException(status_code=400, detail="thread_id is required")
 
@@ -233,12 +219,10 @@ def chat(request: ChatRequest):
 
         recent_msgs = mm.get_recent_messages(db, thread.id)
 
-        # Get mem0 memories
         user_mems, proj_mems = mm.fetch_mem0_context(
             USER_ID, project_id, request.message
         )
 
-        # Build the full prompt
         prompt_messages = mm.build_prompt(
             user_mems,
             proj_mems,
@@ -247,16 +231,13 @@ def chat(request: ChatRequest):
             request.message,
         )
 
-        # Call LLM
         llm = make_llm()
         response = llm(prompt_messages)
 
-        # Store messages
         mm.store_message(db, thread.id, USER_ID, "user", request.message)
         mm.store_message(db, thread.id, USER_ID, "assistant", response)
         thread.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
 
-        # Auto-generate title from first user message if not set
         if not thread.title and request.message:
             title = request.message[:50]
             if len(request.message) > 50:
@@ -265,17 +246,15 @@ def chat(request: ChatRequest):
 
         db.commit()
 
-        # Update thread summary periodically
         if mm.should_update_summary(db, thread.id):
             mm.update_thread_summary(db, thread)
 
-        # Add to mem0
         mm.add_to_mem0(
             USER_ID, project_id, recent_msgs,
             request.message, response
         )
 
-        print(f"[api] /api/chat response: {len(response)} chars")
+        logger.info(f"POST /api/chat response: {len(response)} chars", extra={"session_id": thread.id})
         return {
             "content": response,
             "thread_id": thread.id,
@@ -311,9 +290,8 @@ def list_threads():
         )
         threads = []
         for sess in sessions:
-            # Determine status: pinned > regular > archived
             if sess.archived == "pinned":
-                status = "regular"  # Show as regular but will have isPinned flag
+                status = "regular"
             elif sess.archived == "true":
                 status = "archived"
             else:
@@ -326,7 +304,6 @@ def list_threads():
                 "isPinned": sess.archived == "pinned",
             })
 
-        # Sort: pinned first, then by activity
         threads.sort(key=lambda t: (not t.get("isPinned", False), 0))
         return {"threads": threads}
     finally:
@@ -348,7 +325,7 @@ def create_thread():
         db.add(sess)
         db.commit()
         db.refresh(sess)
-        print(f"[api] Created new thread: {sess.id}")
+        logger.info(f"Created new thread: {sess.id}", extra={"session_id": sess.id, "user_id": USER_ID})
         return {"remoteId": sess.id}
     finally:
         db.close()
@@ -402,7 +379,7 @@ def append_message(thread_id: str, request: MessageAppendRequest):
         db.add(msg)
         sess.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
         db.commit()
-        print(f"[api] Appended {request.role} message to thread {thread_id}")
+        logger.debug(f"Appended {request.role} message to thread", extra={"session_id": thread_id})
         return {"status": "ok", "id": str(msg.id)}
     finally:
         db.close()
@@ -419,7 +396,7 @@ def rename_thread(thread_id: str, request: ThreadRenameRequest):
 
         sess.title = request.title
         db.commit()
-        print(f"[api] Renamed thread {thread_id} to: {request.title}")
+        logger.info(f"Renamed thread to: {request.title}", extra={"session_id": thread_id})
         return {"status": "ok"}
     finally:
         db.close()
@@ -434,7 +411,6 @@ def generate_thread_title(thread_id: str):
         if not sess:
             raise HTTPException(status_code=404, detail="Thread not found")
 
-        # Get the first few messages
         messages = (
             db.query(Message)
             .filter_by(session_id=thread_id)
@@ -446,14 +422,12 @@ def generate_thread_title(thread_id: str):
         if not messages:
             return {"title": "New Chat"}
 
-        # Build context for title generation
         context = "\n".join([
             f"{msg.role}: {msg.content[:200]}"
             for msg in messages
             if msg.content
         ])
 
-        # Use LLM to generate a short title
         title_prompt = [
             {
                 "role": "system",
@@ -468,13 +442,11 @@ def generate_thread_title(thread_id: str):
         try:
             llm = make_llm()
             title = llm(title_prompt).strip()
-            # Clean up and truncate
             title = title.strip('"\'').strip()
             if len(title) > 50:
                 title = title[:47] + "..."
         except Exception as e:
-            print(f"[api] Error generating title with LLM: {e}")
-            # Fallback to first user message
+            logger.error(f"Error generating title with LLM: {e}", extra={"session_id": thread_id}, exc_info=True)
             first_user = next((m for m in messages if m.role == "user"), None)
             if first_user and first_user.content:
                 title = first_user.content[:50]
@@ -483,10 +455,9 @@ def generate_thread_title(thread_id: str):
             else:
                 title = "New Chat"
 
-        # Save the title
         sess.title = title
         db.commit()
-        print(f"[api] Generated title for thread {thread_id}: {title}")
+        logger.info(f"Generated title for thread: {title}", extra={"session_id": thread_id})
 
         return {"title": title}
     finally:
@@ -502,13 +473,12 @@ def delete_thread(thread_id: str):
         if not sess:
             raise HTTPException(status_code=404, detail="Thread not found")
 
-        # Prevent archiving pinned threads
         if sess.archived == "pinned":
             raise HTTPException(status_code=400, detail="Cannot archive pinned thread")
 
         sess.archived = "true"
         db.commit()
-        print(f"[api] Archived thread {thread_id}")
+        logger.info(f"Archived thread", extra={"session_id": thread_id})
         return {"status": "ok"}
     finally:
         db.close()
@@ -551,7 +521,7 @@ def unarchive_thread(thread_id: str):
 
         sess.archived = "false"
         db.commit()
-        print(f"[api] Unarchived thread {thread_id}")
+        logger.info(f"Unarchived thread", extra={"session_id": thread_id})
         return {"status": "ok"}
     finally:
         db.close()
@@ -560,14 +530,13 @@ def unarchive_thread(thread_id: str):
 @app.get("/health")
 def health():
     """Health check endpoint."""
-    print("[api] Health check called")
     return {"status": "ok"}
 
 
 @app.post("/api/test")
 def test_post(request: ContextRequest):
     """Test endpoint to verify POST requests work."""
-    print(f"[api] Test endpoint called with: {request}")
+    logger.debug(f"Test endpoint called with: {request}")
     return {"received": request.model_dump()}
 
 
@@ -581,9 +550,9 @@ class MemoryUpdateRequest(BaseModel):
 
 
 class ContactImportRequest(BaseModel):
-    contact_id: str  # Phone number or email
-    contact_name: str = None  # Optional display name
-    limit: int = None  # Max messages to import
+    contact_id: str
+    contact_name: str = None
+    limit: int = None
 
 
 @app.get("/api/memories")
@@ -596,17 +565,16 @@ def list_memories(project_id: str = None):
         result = MEM0.get_all(user_id=USER_ID)
         memories = result.get("results", []) if isinstance(result, dict) else result
 
-        # Filter by project if specified
         if project_id:
             memories = [
                 m for m in memories
                 if m.get("metadata", {}).get("project_id") == project_id
             ]
 
-        print(f"[api] Listed {len(memories)} memories")
+        logger.info(f"Listed {len(memories)} memories", extra={"user_id": USER_ID})
         return {"memories": memories}
     except Exception as e:
-        print(f"[api] Error listing memories: {e}")
+        logger.error(f"Error listing memories: {e}", extra={"user_id": USER_ID}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -620,12 +588,12 @@ def get_memory(memory_id: str):
         result = MEM0.get(memory_id)
         if not result:
             raise HTTPException(status_code=404, detail="Memory not found")
-        print(f"[api] Retrieved memory {memory_id}")
+        logger.debug(f"Retrieved memory {memory_id}")
         return {"memory": result}
     except HTTPException:
         raise
     except Exception as e:
-        print(f"[api] Error getting memory: {e}")
+        logger.error(f"Error getting memory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -637,10 +605,10 @@ def update_memory(memory_id: str, request: MemoryUpdateRequest):
 
     try:
         result = MEM0.update(memory_id, request.text)
-        print(f"[api] Updated memory {memory_id}")
+        logger.info(f"Updated memory {memory_id}")
         return {"status": "ok", "result": result}
     except Exception as e:
-        print(f"[api] Error updating memory: {e}")
+        logger.error(f"Error updating memory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -652,10 +620,10 @@ def delete_memory(memory_id: str):
 
     try:
         MEM0.delete(memory_id)
-        print(f"[api] Deleted memory {memory_id}")
+        logger.info(f"Deleted memory {memory_id}")
         return {"status": "ok"}
     except Exception as e:
-        print(f"[api] Error deleting memory: {e}")
+        logger.error(f"Error deleting memory: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -667,7 +635,6 @@ def delete_all_memories(project_id: str = None):
 
     try:
         if project_id:
-            # Get all memories and delete those matching project
             result = MEM0.get_all(user_id=USER_ID)
             memories = result.get("results", []) if isinstance(result, dict) else result
             deleted = 0
@@ -675,14 +642,14 @@ def delete_all_memories(project_id: str = None):
                 if m.get("metadata", {}).get("project_id") == project_id:
                     MEM0.delete(m["id"])
                     deleted += 1
-            print(f"[api] Deleted {deleted} memories for project {project_id}")
+            logger.info(f"Deleted {deleted} memories for project {project_id}", extra={"user_id": USER_ID})
             return {"status": "ok", "deleted": deleted}
         else:
             MEM0.delete_all(user_id=USER_ID)
-            print(f"[api] Deleted all memories for user {USER_ID}")
+            logger.info(f"Deleted all memories for user", extra={"user_id": USER_ID})
             return {"status": "ok"}
     except Exception as e:
-        print(f"[api] Error deleting memories: {e}")
+        logger.error(f"Error deleting memories: {e}", extra={"user_id": USER_ID}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -698,10 +665,10 @@ def search_memories(request: ContextRequest):
             user_id=USER_ID,
         )
         memories = result.get("results", []) if isinstance(result, dict) else result
-        print(f"[api] Search found {len(memories)} memories")
+        logger.info(f"Search found {len(memories)} memories", extra={"user_id": USER_ID})
         return {"memories": memories}
     except Exception as e:
-        print(f"[api] Error searching memories: {e}")
+        logger.error(f"Error searching memories: {e}", extra={"user_id": USER_ID}, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -717,7 +684,6 @@ def list_contacts():
         result = MEM0.get_all(user_id=USER_ID)
         memories = result.get("results", []) if isinstance(result, dict) else result
 
-        # Extract unique contacts from metadata
         contacts = {}
         for m in memories:
             metadata = m.get("metadata", {})
@@ -734,7 +700,7 @@ def list_contacts():
 
         return {"contacts": list(contacts.values())}
     except Exception as e:
-        print(f"[api] Error listing contacts: {e}")
+        logger.error(f"Error listing contacts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -748,16 +714,15 @@ def get_contact_memories(contact_id: str):
         result = MEM0.get_all(user_id=USER_ID)
         memories = result.get("results", []) if isinstance(result, dict) else result
 
-        # Filter by contact_id in metadata
         contact_memories = [
             m for m in memories
             if m.get("metadata", {}).get("contact_id") == contact_id
         ]
 
-        print(f"[api] Found {len(contact_memories)} memories for contact {contact_id}")
+        logger.info(f"Found {len(contact_memories)} memories for contact {contact_id}")
         return {"memories": contact_memories}
     except Exception as e:
-        print(f"[api] Error getting contact memories: {e}")
+        logger.error(f"Error getting contact memories: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -777,10 +742,10 @@ def delete_contact_memories(contact_id: str):
                 MEM0.delete(m["id"])
                 deleted += 1
 
-        print(f"[api] Deleted {deleted} memories for contact {contact_id}")
+        logger.info(f"Deleted {deleted} memories for contact {contact_id}")
         return {"status": "ok", "deleted": deleted}
     except Exception as e:
-        print(f"[api] Error deleting contact memories: {e}")
+        logger.error(f"Error deleting contact memories: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -792,13 +757,12 @@ def list_imessage_contacts():
 
         contacts = imsg_list_contacts()
 
-        # Format for API response
         formatted = []
         for contact_id, stats in sorted(
             contacts.items(),
             key=lambda x: x[1]["sent"] + x[1]["received"],
             reverse=True
-        )[:100]:  # Limit to top 100
+        )[:100]:
             formatted.append({
                 "contact_id": contact_id,
                 "sent": stats["sent"],
@@ -814,7 +778,7 @@ def list_imessage_contacts():
             detail="iMessage database not accessible. Ensure Full Disk Access is enabled."
         )
     except Exception as e:
-        print(f"[api] Error listing iMessage contacts: {e}")
+        logger.error(f"Error listing iMessage contacts: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -846,7 +810,7 @@ def import_imessage_contact(request: ContactImportRequest):
             detail="iMessage database not accessible. Ensure Full Disk Access is enabled."
         )
     except Exception as e:
-        print(f"[api] Error importing iMessage contact: {e}")
+        logger.error(f"Error importing iMessage contact: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -858,7 +822,7 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY")
 class SearchRequest(BaseModel):
     query: str
     max_results: int = 5
-    search_depth: str = "basic"  # "basic" or "advanced"
+    search_depth: str = "basic"
     include_answer: bool = True
 
 
@@ -889,7 +853,6 @@ async def web_search(request: SearchRequest):
             response.raise_for_status()
             data = response.json()
 
-        # Format results for the LLM
         results = []
         for r in data.get("results", []):
             results.append({
@@ -899,7 +862,7 @@ async def web_search(request: SearchRequest):
                 "score": r.get("score", 0),
             })
 
-        print(f"[api] Web search for '{request.query}': {len(results)} results")
+        logger.info(f"Web search for '{request.query}': {len(results)} results")
 
         return {
             "query": request.query,
@@ -907,10 +870,10 @@ async def web_search(request: SearchRequest):
             "results": results,
         }
     except httpx.HTTPStatusError as e:
-        print(f"[api] Tavily API error: {e.response.status_code} - {e.response.text}")
+        logger.error(f"Tavily API error: {e.response.status_code}", exc_info=True)
         raise HTTPException(status_code=502, detail="Search API error")
     except Exception as e:
-        print(f"[api] Web search error: {e}")
+        logger.error(f"Web search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 
