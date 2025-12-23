@@ -1439,15 +1439,21 @@ You can search and review the full chat history beyond what's in your current co
 
                 logger.info("Sent reply to Discord")
 
-            # Cache the bot's last response message
-            if response_msg:
-                async with self.cache_lock:
-                    self.msg_cache[response_msg.id] = CachedMessage(
-                        content=full_response,
-                        user_id=str(self.user.id) if self.user else "",
-                        username="Clara",
-                        is_bot=True,
-                    )
+                # Cache the bot's last response message
+                if response_msg:
+                    async with self.cache_lock:
+                        self.msg_cache[response_msg.id] = CachedMessage(
+                            content=full_response,
+                            user_id=str(self.user.id) if self.user else "",
+                            username="Clara",
+                            is_bot=True,
+                        )
+
+            except Exception as e:
+                logger.exception(f"Sending response: {e}")
+                error_msg = f"I had trouble sending my response: {str(e)[:100]}"
+                await message.reply(error_msg, mention_author=False)
+                return ""
 
         except Exception as e:
             logger.exception(f"Generating response: {e}")
