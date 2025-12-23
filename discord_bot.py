@@ -130,8 +130,58 @@ DEFAULT_PROJECT = os.getenv("DEFAULT_PROJECT", "Default Project")
 DOCKER_ENABLED = True  # Docker sandbox is always available if Docker is running
 MAX_TOOL_ITERATIONS = 10  # Max tool call rounds per response
 
+# Auto-continue configuration
+# When Clara ends with a permission-seeking question, auto-continue without waiting
+AUTO_CONTINUE_ENABLED = os.getenv("DISCORD_AUTO_CONTINUE", "true").lower() == "true"
+AUTO_CONTINUE_MAX = int(os.getenv("DISCORD_AUTO_CONTINUE_MAX", "3"))  # Max auto-continues per conversation
+
+# Patterns that trigger auto-continue (case-insensitive, checked at end of response)
+AUTO_CONTINUE_PATTERNS = [
+    "want me to do it?",
+    "want me to proceed?",
+    "want me to continue?",
+    "want me to go ahead?",
+    "want me to start?",
+    "want me to try?",
+    "want me to implement",
+    "want me to fix",
+    "want me to create",
+    "want me to build",
+    "want me to run",
+    "shall i proceed?",
+    "shall i continue?",
+    "shall i go ahead?",
+    "shall i do it?",
+    "shall i start?",
+    "should i proceed?",
+    "should i continue?",
+    "should i go ahead?",
+    "should i do it?",
+    "ready to proceed?",
+    "ready when you are",
+    "let me know if you want",
+    "let me know when you're ready",
+    "just say the word",
+    "give me the go-ahead",
+]
+
 # Track whether modular tools have been initialized
 _modular_tools_initialized = False
+
+
+def _should_auto_continue(response: str) -> bool:
+    """Check if response ends with a pattern that should trigger auto-continue."""
+    if not AUTO_CONTINUE_ENABLED or not response:
+        return False
+
+    # Check the last 200 chars of the response (lowercased)
+    response_end = response[-200:].lower().strip()
+
+    for pattern in AUTO_CONTINUE_PATTERNS:
+        if pattern in response_end:
+            return True
+
+    return False
 
 
 async def init_modular_tools() -> None:
@@ -844,9 +894,22 @@ You can search and review the full chat history beyond what's in your current co
                 except Exception:
                     pass
 
-    async def _handle_message(self, message: DiscordMessage, is_dm: bool = False):
-        """Process a message and generate a response."""
-        content_preview = message.content[:50]
+    async def _handle_message(
+        self,
+        message: DiscordMessage,
+        is_dm: bool = False,
+        auto_continue_count: int = 0,
+        auto_continue_content: str | None = None,
+    ):
+        """Process a message and generate a response.
+
+        Args:
+            message: The Discord message to respond to
+            is_dm: Whether this is a DM (vs channel message)
+            auto_continue_count: How many auto-continues have happened (to prevent loops)
+            auto_continue_content: If set, use this as the user message instead of message.content
+        """
+        content_preview = (auto_continue_content or message.content)[:50]
         logger.info(f"Handling message from {message.author}: {content_preview!r}")
 
         async with message.channel.typing():
@@ -881,11 +944,14 @@ You can search and review the full chat history beyond what's in your current co
                 project_id = await self._ensure_project(user_id)
                 logger.debug(f" User: {user_id}, Project: {project_id}")
 
-                # Get the user's message content
-                raw_content = self._clean_content(message.content)
-
-                # Detect tier override from message prefix (!high, !mid, !low, etc.)
-                tier_override, raw_content = detect_tier_from_message(raw_content)
+                # Get the user's message content (or use auto-continue content)
+                if auto_continue_content:
+                    raw_content = auto_continue_content
+                    tier_override = None  # Don't change tier on auto-continue
+                else:
+                    raw_content = self._clean_content(message.content)
+                    # Detect tier override from message prefix (!high, !mid, !low, etc.)
+                    tier_override, raw_content = detect_tier_from_message(raw_content)
 
                 # Extract and append file attachments (also saves to local storage)
                 attachments = await self._extract_attachments(message, user_id)
@@ -1010,6 +1076,26 @@ You can search and review the full chat history beyond what's in your current co
                     monitor.log(
                         "response", "Clara", response_preview, guild_name, channel_name
                     )
+
+                    # Check for auto-continue (Clara asking permission to proceed)
+                    if (
+                        _should_auto_continue(response)
+                        and auto_continue_count < AUTO_CONTINUE_MAX
+                    ):
+                        logger.info(
+                            f"Auto-continuing ({auto_continue_count + 1}/{AUTO_CONTINUE_MAX})"
+                        )
+                        # Send a subtle indicator that we're auto-continuing
+                        await message.channel.send(
+                            "-# ▶️ Proceeding automatically...", silent=True
+                        )
+                        # Recursively handle with "yes, go ahead" as the user message
+                        await self._handle_message(
+                            message,
+                            is_dm,
+                            auto_continue_count=auto_continue_count + 1,
+                            auto_continue_content="Yes, go ahead.",
+                        )
 
             except Exception as e:
                 logger.exception(f"Error handling message: {e}")
