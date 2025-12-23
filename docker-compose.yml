@@ -207,6 +207,8 @@ services:
       # Fast LLM (for quick operations)
       - FAST_LLM_PROVIDER=${FAST_LLM_PROVIDER:-}
       - FAST_LLM_MODEL=${FAST_LLM_MODEL:-}
+      # Docker sandbox
+      - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
       # E2B sandbox (alternative to Docker)
       - E2B_API_KEY=${E2B_API_KEY:-}
       - E2B_TIMEOUT=${E2B_TIMEOUT:-300}
