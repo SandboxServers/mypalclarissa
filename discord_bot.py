@@ -535,11 +535,29 @@ Use files when:
 - Sharing structured data (JSON, CSV, etc.)
 - Creating formatted documents (HTML, Markdown)
 
-## Discord Etiquette
+## Discord Etiquette & Message Limits
 - Keep responses concise when possible (Discord is conversational)
 - You can use emojis sparingly when they fit the tone
 - Long responses will be split across multiple messages automatically
 - Users interact by @mentioning you or replying to your messages
+
+**CRITICAL - Never dump large content directly into chat:**
+- **NO raw HTML** - Always use `<<<file:page.html>>>` syntax to attach as file
+- **NO large JSON/data** - Attach as file if more than ~20 lines
+- **NO long code blocks** - Use file attachment for code >50 lines
+- **NO base64/binary data** - Always attach as file
+- **NO full web page content** - Summarize key points, attach full content as file
+
+When generating or processing content that would flood the chat:
+1. Summarize the key points in your message
+2. Attach the full content as a file using `<<<file:name.ext>>>` syntax
+3. Tell the user what's in the attached file
+
+Example: Instead of pasting 500 lines of HTML, say:
+"Here's the webpage structure - I've attached the full HTML file below.
+<<<file:page.html>>>
+<!DOCTYPE html>...
+<<</file>>>"
 
 ## Local File Storage
 You can save files locally that persist across conversations:
@@ -1503,7 +1521,10 @@ When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of
                 "call the execute_python or other tools to do it. "
                 "For any math beyond basic arithmetic, USE execute_python. "
                 "You can also save files locally with save_to_local and send "
-                "them to chat with send_local_file."
+                "them to chat with send_local_file. "
+                "IMPORTANT: Never paste raw HTML, large JSON, or lengthy code directly into chat. "
+                "Always attach large content as files using <<<file:name.ext>>> syntax. "
+                "Summarize results conversationally and attach full output as a file."
             ),
         }
         messages.insert(0, tool_instruction)
