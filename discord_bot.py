@@ -634,57 +634,12 @@ You can search and review the full chat history beyond what's in your current co
 **Note:** Only the current channel's history is accessible.
 """
 
-        # Add Docker sandbox capabilities if available
-        if DOCKER_ENABLED:
-            sandbox_context = """
-
-## Code Execution (Docker Sandbox)
-You have access to a secure Docker sandbox where you can execute code! This gives you
-real computational abilities - you're not just simulating or explaining code.
-
-**Sandbox Tools:**
-- `execute_python` - Run Python code (stateful - variables persist across calls)
-- `install_package` - Install pip packages (requests, pandas, numpy, etc.)
-- `run_shell` - Run shell commands (curl, git, wget, etc.)
-- `read_file` / `write_file` - Read and write files in the sandbox
-- `list_files` - List directory contents
-- `unzip_file` - Extract archives (.zip, .tar.gz, .tar, etc.)
-
-**Web Search:**
-- `web_search` - Search the web via Tavily for current info, research, docs
-
-**Local Storage Tools (permanent, survives restarts):**
-- `save_to_local` - Save content directly to local storage
-- `list_local_files` - List files in local storage
-- `read_local_file` - Read a locally saved file
-- `delete_local_file` - Delete a local file
-- `download_from_sandbox` - Copy sandbox file to local storage
-- `upload_to_sandbox` - Upload local file to sandbox
-- `send_local_file` - Send a local file to Discord chat
-
-**When to Use Code Execution:**
-- Mathematical calculations (don't calculate in your head - run the code!)
-- Data analysis or processing
-- Web requests / API calls
-- File generation (then share results)
-- Testing code snippets users ask about
-
-**Important:**
-- The sandbox has internet access - you can fetch URLs, call APIs, etc.
-- Each user has their own persistent sandbox (variables and files persist)
-- Show users what you're doing: mention when you're running code
-- If code fails, you'll see the error - fix and retry
-
-**Example:**
-When asked "What's 2^100?", use `execute_python` with `print(2**100)` instead of guessing.
-
-**Sandbox vs Local Files:**
-- Sandbox files (`write_file`) are temporary - use for intermediate work
-- Local files (`save_to_local`) are permanent - use for important results
-- Use `download_from_sandbox` to move sandbox results to local storage
-- Use `send_local_file` or `<<<file:...>>>` syntax to share files in chat
-"""
-            context += sandbox_context
+        # Add tool capabilities from modular tools system
+        if _modular_tools_initialized:
+            registry = get_registry()
+            tool_prompts = registry.get_system_prompts(platform="discord")
+            if tool_prompts:
+                context += "\n\n" + tool_prompts
 
         return context.strip()
 
