@@ -128,7 +128,7 @@ DEFAULT_PROJECT = os.getenv("DEFAULT_PROJECT", "Default Project")
 
 # Docker sandbox configuration
 DOCKER_ENABLED = True  # Docker sandbox is always available if Docker is running
-MAX_TOOL_ITERATIONS = 10  # Max tool call rounds per response
+MAX_TOOL_ITERATIONS = 75  # Max tool call rounds per response
 
 # Auto-continue configuration
 # When Clara ends with a permission-seeking question, auto-continue without waiting
