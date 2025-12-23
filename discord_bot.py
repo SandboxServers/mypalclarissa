@@ -557,23 +557,18 @@ Discord uses a flavor of Markdown. Use these to format your messages:
 
 ## File Attachments
 
-**For LARGE content (>50 lines, HTML, JSON, code files) - USE TOOLS:**
-1. `save_to_local` - Save the content to a file
-2. `send_local_file` - Attach the file to your message
-This is the MOST RELIABLE method and handles large files properly.
+**PREFERRED: Use `create_file_attachment` tool to share files!**
+This tool creates AND attaches a file in one step - most reliable method.
+Works for HTML, JSON, code, or any text content.
 
-**For SMALL content (<50 lines) - Use inline syntax:**
+**Alternative for small content (<50 lines):**
 ```
 <<<file:filename.ext>>>
-file content here
+content
 <<</file>>>
 ```
 
-**NEVER dump large content directly into chat:**
-- NO raw HTML - save and send as file
-- NO large JSON/data - save and send as file
-- NO long code - save and send as file
-- NO base64/binary - save and send as file
+**NEVER paste raw HTML, large JSON, or long code into chat - use tools instead.**
 
 ## Discord Etiquette
 - Keep responses concise (Discord is conversational)
@@ -1497,15 +1492,10 @@ You can search and review the full chat history beyond what's in your current co
         tool_instruction = {
             "role": "system",
             "content": (
-                "CRITICAL FILE ATTACHMENT RULES (ALWAYS FOLLOW):\n"
-                "For LARGE content (>50 lines, HTML, JSON, code files):\n"
-                "1. Use save_to_local tool to save the file\n"
-                "2. Use send_local_file tool to attach it to your message\n"
-                "This is MORE RELIABLE than <<<file:>>> syntax for large content.\n\n"
-                "For SMALL content (<50 lines):\n"
-                "- Use <<<file:name.ext>>>content<<</file>>> syntax (inline)\n\n"
-                "NEVER paste raw HTML, large JSON, or long code directly into chat.\n"
-                "When user asks for a 'file/download/attachment' - use the tools above.\n\n"
+                "CRITICAL FILE ATTACHMENT RULES:\n"
+                "To share files (HTML, JSON, code, etc.) use `create_file_attachment` tool.\n"
+                "This is the MOST RELIABLE method - it saves AND attaches in one step.\n"
+                "NEVER paste raw HTML, large JSON, or long code directly into chat.\n\n"
                 "You have access to tools for code execution, file management, and developer integrations. "
                 "When the user asks you to calculate, run code, analyze data, "
                 "fetch URLs, install packages, or do anything computational - "
@@ -1542,6 +1532,7 @@ You can search and review the full chat history beyond what's in your current co
             "download_from_sandbox": ("⬇️", "Downloading from sandbox"),
             "upload_to_sandbox": ("⬆️", "Uploading to sandbox"),
             "send_local_file": ("📤", "Preparing file"),
+            "create_file_attachment": ("📎", "Creating file attachment"),
             # Chat history tools
             "search_chat_history": ("🔎", "Searching chat history"),
             "get_chat_history": ("📜", "Retrieving chat history"),
