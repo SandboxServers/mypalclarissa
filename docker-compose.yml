@@ -4,15 +4,15 @@ services:
     image: postgres:16
     container_name: mypalclarissa-postgres
     environment:
-      POSTGRES_USER: clara
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clara}
-      POSTGRES_DB: clara_main
+      POSTGRES_USER: clarissa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clarissa}
+      POSTGRES_DB: clarissa_main
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clara -d clara_main"]
+      test: ["CMD-SHELL", "pg_isready -U clarissa -d clarissa_main"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -22,15 +22,15 @@ services:
     image: pgvector/pgvector:pg16
     container_name: mypalclarissa-postgres-vectors
     environment:
-      POSTGRES_USER: clara
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clara}
-      POSTGRES_DB: clara_vectors
+      POSTGRES_USER: clarissa
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-clarissa}
+      POSTGRES_DB: clarissa_vectors
     volumes:
       - postgres-vectors-data:/var/lib/postgresql/data
     ports:
       - "5433:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clara -d clara_vectors"]
+      test: ["CMD-SHELL", "pg_isready -U clarissa -d clarissa_vectors"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -66,8 +66,8 @@ services:
       # OpenAI (for embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # PostgreSQL (hardcoded for Docker - ignores .env localhost values)
-      - DATABASE_URL=postgresql://clara:${POSTGRES_PASSWORD:-clara}@postgres:5432/clara_main
-      - MEM0_DATABASE_URL=postgresql://clara:${POSTGRES_PASSWORD:-clara}@postgres-vectors:5432/clara_vectors
+      - DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres:5432/clarissa_main
+      - MEM0_DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres-vectors:5432/clarissa_vectors
       # Mem0 Provider
       - MEM0_PROVIDER=${MEM0_PROVIDER:-openrouter}
       - MEM0_MODEL=${MEM0_MODEL:-openai/gpt-4o-mini}
@@ -178,8 +178,8 @@ services:
       # OpenAI (for embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # PostgreSQL (hardcoded for Docker - ignores .env localhost values)
-      - DATABASE_URL=postgresql://clara:${POSTGRES_PASSWORD:-clara}@postgres:5432/clara_main
-      - MEM0_DATABASE_URL=postgresql://clara:${POSTGRES_PASSWORD:-clara}@postgres-vectors:5432/clara_vectors
+      - DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres:5432/clarissa_main
+      - MEM0_DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres-vectors:5432/clarissa_vectors
       # Mem0 Provider
       - MEM0_PROVIDER=${MEM0_PROVIDER:-openrouter}
       - MEM0_MODEL=${MEM0_MODEL:-openai/gpt-4o-mini}

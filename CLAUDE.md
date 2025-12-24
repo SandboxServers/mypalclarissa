@@ -147,8 +147,8 @@ For production, use managed PostgreSQL instead of SQLite/Qdrant:
 
 Example (Railway):
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/clara_main
-MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clara_vectors
+DATABASE_URL=postgresql://user:pass@host:5432/clarissa_main
+MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clarissa_vectors
 ```
 
 To migrate existing data:
@@ -257,8 +257,8 @@ Set `DATABASE_URL` and `MEM0_DATABASE_URL` to use PostgreSQL instead of SQLite/Q
 
 ```bash
 # .env
-DATABASE_URL=postgresql://user:pass@localhost:5432/clara_main
-MEM0_DATABASE_URL=postgresql://user:pass@localhost:5432/clara_vectors
+DATABASE_URL=postgresql://user:pass@localhost:5432/clarissa_main
+MEM0_DATABASE_URL=postgresql://user:pass@localhost:5432/clarissa_vectors
 ```
 
 Enable pgvector on the vectors database:

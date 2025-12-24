@@ -23,7 +23,7 @@ MAX_FILE_SIZE = int(os.getenv("CLARISSA_MAX_FILE_SIZE", str(50 * 1024 * 1024))) 
 
 # S3 Configuration
 S3_ENABLED = os.getenv("S3_ENABLED", "false").lower() == "true"
-S3_BUCKET = os.getenv("S3_BUCKET", "clara-files")
+S3_BUCKET = os.getenv("S3_BUCKET", "clarissa-files")
 S3_ENDPOINT_URL = os.getenv("S3_ENDPOINT_URL", "https://s3.wasabisys.com")
 S3_ACCESS_KEY = os.getenv("S3_ACCESS_KEY", "")
 S3_SECRET_KEY = os.getenv("S3_SECRET_KEY", "")
@@ -480,7 +480,7 @@ class S3FileManager:
 
         self.bucket = bucket
         self.endpoint_url = endpoint_url
-        self._temp_dir = Path(tempfile.gettempdir()) / "clara_s3_cache"
+        self._temp_dir = Path(tempfile.gettempdir()) / "clarissa_s3_cache"
         self._temp_dir.mkdir(parents=True, exist_ok=True)
 
         self.s3 = boto3.client(
