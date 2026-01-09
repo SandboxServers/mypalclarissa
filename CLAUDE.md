@@ -249,6 +249,54 @@ Clarissa can interact with Azure DevOps projects, repos, work items, and pipelin
 - All LLM backends use OpenAI-compatible API (OpenAI SDK on backend, AI SDK on frontend)
 - Thread adapter uses empty `BACKEND_URL` to leverage Next.js rewrites for CORS-free backend access
 
+## KIRA-Inspired Features
+
+MyPalClarissa includes features inspired by [KIRA](https://github.com/krafton-ai/KIRA) (Krafton's AI Virtual Coworker).
+
+### Auto Tier Selection
+Automatically selects model tier based on task complexity instead of requiring manual prefixes.
+- `AUTO_TIER_ENABLED=true` - Enable automatic tier selection (default: true)
+- `AUTO_TIER_SHOW_SELECTION=false` - Show auto-selected tier to user (default: false)
+
+Manual prefixes (`!high`, `!mid`, `!low`) always override automatic selection.
+
+Complexity indicators that trigger HIGH tier:
+- Code review/generation requests
+- Multi-step planning tasks
+- Creative writing
+- Complex reasoning keywords
+
+### Proactive Monitoring (Checkers)
+Background processes that monitor external services and notify users of updates.
+
+**Configuration:**
+```bash
+PROACTIVE_ENABLED=true          # Enable background checkers
+PROACTIVE_QUIET_START=22        # Quiet hours start (10pm)
+PROACTIVE_QUIET_END=8           # Quiet hours end (8am)
+```
+
+**Available Checkers:**
+
+| Checker | Env Prefix | Monitors |
+|---------|-----------|----------|
+| GitHub | `GITHUB_CHECKER_*` | PR reviews, notifications, CI failures |
+| Azure DevOps | `ADO_CHECKER_*` | Work items, PR reviews, build failures |
+| Email | `EMAIL_CHECKER_*` | New emails (uses existing email config) |
+
+Per-checker configuration:
+```bash
+GITHUB_CHECKER_ENABLED=true
+GITHUB_CHECKER_INTERVAL=15    # Minutes between checks
+```
+
+### Pipeline Architecture
+Messages flow through a multi-stage pipeline (in `clarissa_core/`):
+1. **Intent Detection** (`intent.py`) - Classify message type and complexity
+2. **Tier Selection** (`tier_selector.py`) - Choose optimal model tier
+3. **Execution** - Generate response with selected tier
+4. **Memory Extraction** - Store important facts (async)
+
 ## Production Deployment
 
 ### With PostgreSQL (recommended)

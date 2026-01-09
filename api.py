@@ -564,6 +564,29 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/health/checkers")
+def health_checkers():
+    """Health check endpoint for proactive checkers."""
+    try:
+        from checkers import get_scheduler, get_registry
+        scheduler = get_scheduler()
+        registry = get_registry()
+        return {
+            "status": "ok",
+            "scheduler_running": scheduler.is_running,
+            "checkers": [
+                {
+                    "name": c.name,
+                    "enabled": c.enabled,
+                    "interval_minutes": c.config.interval_minutes,
+                }
+                for c in registry.get_all()
+            ],
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 @app.get("/version")
 def version():
     """Get platform version information."""

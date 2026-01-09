@@ -96,3 +96,37 @@ class LogEntry(Base):
     extra_data = Column(Text, nullable=True)  # JSON for additional context
     user_id = Column(String, nullable=True, index=True)
     session_id = Column(String, nullable=True, index=True)
+
+
+# =============================================================================
+# KIRA-inspired Proactive Monitoring
+# =============================================================================
+
+
+class CheckerSubscription(Base):
+    """User subscriptions to background checkers."""
+
+    __tablename__ = "checker_subscriptions"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    checker_name = Column(String, nullable=False)  # github, ado, email
+    enabled = Column(String, default="true", nullable=False)  # "true" or "false"
+    notification_channel_id = Column(String, nullable=True)  # Where to send notifications
+    config = Column(Text, nullable=True)  # JSON: checker-specific settings
+    last_check_at = Column(DateTime, nullable=True)
+    last_notification_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class CheckerState(Base):
+    """State for incremental checking (e.g., last seen notification ID)."""
+
+    __tablename__ = "checker_states"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    checker_name = Column(String, nullable=False)
+    state_key = Column(String, nullable=False)  # e.g., "last_notification_id"
+    state_value = Column(Text, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

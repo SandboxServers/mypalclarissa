@@ -61,6 +61,10 @@ from clarissa_core import (
     make_llm_with_tools,
     ModelTier,
     get_model_for_tier,
+    # KIRA-inspired pipeline
+    detect_intent,
+    select_tier,
+    get_tier_display,
 )
 
 # Initialize logging system
@@ -135,6 +139,11 @@ MAX_TOOL_ITERATIONS = 75  # Max tool call rounds per response
 # When Clarissa ends with a permission-seeking question, auto-continue without waiting
 AUTO_CONTINUE_ENABLED = os.getenv("DISCORD_AUTO_CONTINUE", "true").lower() == "true"
 AUTO_CONTINUE_MAX = int(os.getenv("DISCORD_AUTO_CONTINUE_MAX", "3"))  # Max auto-continues per conversation
+
+# KIRA-inspired auto tier selection
+# Automatically select model tier based on task complexity
+AUTO_TIER_ENABLED = os.getenv("AUTO_TIER_ENABLED", "true").lower() == "true"
+AUTO_TIER_SHOW_SELECTION = os.getenv("AUTO_TIER_SHOW_SELECTION", "false").lower() == "true"  # Show auto-selected tier to user
 
 # Patterns that trigger auto-continue (case-insensitive, checked at end of response)
 AUTO_CONTINUE_PATTERNS = [
@@ -699,6 +708,15 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
         self.loop.create_task(email_check_loop(self))
         logger.info("Email monitoring task started")
 
+        # Start KIRA-inspired proactive checkers
+        try:
+            from checkers import get_scheduler
+            scheduler = get_scheduler(bot=self, db_session_factory=SessionLocal)
+            await scheduler.start()
+            logger.info("Proactive checkers started")
+        except Exception as e:
+            logger.warning(f"Failed to start proactive checkers: {e}")
+
     async def on_guild_join(self, guild):
         """Called when bot joins a guild."""
         monitor.update_guilds(self.guilds)
@@ -871,10 +889,43 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                 if auto_continue_content:
                     raw_content = auto_continue_content
                     tier_override = None  # Don't change tier on auto-continue
+                    auto_tier_selected = False
                 else:
                     raw_content = self._clean_content(message.content)
                     # Detect tier override from message prefix (!high, !mid, !low, etc.)
                     tier_override, raw_content = detect_tier_from_message(raw_content)
+                    auto_tier_selected = False
+
+                    # KIRA-inspired: Auto tier selection when no manual tier specified
+                    if tier_override is None and AUTO_TIER_ENABLED:
+                        # Analyze intent for complexity
+                        intent_context = {
+                            "messages": recent_channel_msgs if not is_dm else [],
+                            "is_dm": is_dm,
+                            "has_attachments": bool(message.attachments),
+                        }
+                        intent_result = detect_intent(raw_content, intent_context)
+                        logger.debug(f" Intent: {intent_result}")
+
+                        # Select tier based on intent
+                        tier_context = {
+                            "message": raw_content,
+                            "messages": recent_channel_msgs if not is_dm else [],
+                        }
+                        tier_override = select_tier(
+                            intent=intent_result,
+                            context=tier_context,
+                        )
+                        auto_tier_selected = True
+                        logger.debug(f" Auto-selected tier: {tier_override}")
+
+                        # Optionally show auto-selected tier to user
+                        if AUTO_TIER_SHOW_SELECTION:
+                            emoji, display = get_tier_display(tier_override)
+                            await message.channel.send(
+                                f"-# {emoji} Auto-selected {display} (complexity: {intent_result.complexity})",
+                                silent=True,
+                            )
 
                 # Extract and append file attachments (also saves to local storage)
                 attachments = await self._extract_attachments(message, user_id)
