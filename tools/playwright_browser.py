@@ -4,6 +4,7 @@ Provides tools for web browsing, screenshots, and page interaction.
 Tools: browse_page, screenshot_page, extract_page_data
 
 Requires: playwright package and browser binaries installed.
+Enable with: PLAYWRIGHT_ENABLED=true (disabled by default to reduce build time)
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +22,9 @@ MODULE_NAME = "playwright_browser"
 MODULE_VERSION = "1.0.0"
 
 logger = logging.getLogger(__name__)
+
+# Check if Playwright is enabled (disabled by default to reduce build time)
+PLAYWRIGHT_ENABLED = os.getenv("PLAYWRIGHT_ENABLED", "false").lower() in ("true", "1", "yes")
 
 SYSTEM_PROMPT = """
 ## Browser Automation (Playwright)
@@ -343,6 +348,12 @@ TOOLS = [
         requires=["playwright"],
     ),
 ]
+
+# Disable tools if PLAYWRIGHT_ENABLED is not set
+if not PLAYWRIGHT_ENABLED:
+    logger.info("[playwright] Disabled (set PLAYWRIGHT_ENABLED=true to enable)")
+    TOOLS = []
+    SYSTEM_PROMPT = ""
 
 
 # --- Lifecycle Hooks ---

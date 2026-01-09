@@ -9,31 +9,31 @@ import subprocess
 import os
 import re
 from typing import Optional, Tuple
-from config import config
+
+# Get GitHub token from environment (same as tools/github.py)
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "")
 
 
 def _inject_token_in_url(url: str) -> str:
     """Inject GitHub token into HTTPS URL for authentication."""
-    token = getattr(config, 'GITHUB_TOKEN', None)
-    if not token:
+    if not GITHUB_TOKEN:
         return url
     
     # Handle https://github.com/... URLs
     if url.startswith("https://github.com/"):
-        return url.replace("https://github.com/", f"https://{token}@github.com/")
+        return url.replace("https://github.com/", f"https://{GITHUB_TOKEN}@github.com/")
     
     # Handle https://TOKEN@github.com/... URLs (already has token)
     if "@github.com/" in url:
-        return re.sub(r'https://[^@]+@github\.com/', f'https://{token}@github.com/', url)
+        return re.sub(r'https://[^@]+@github\.com/', f'https://{GITHUB_TOKEN}@github.com/', url)
     
     return url
 
 
 def _mask_token_in_output(text: str) -> str:
     """Remove any token from output to avoid leaking secrets."""
-    token = getattr(config, 'GITHUB_TOKEN', None)
-    if token and token in text:
-        text = text.replace(token, '***TOKEN***')
+    if GITHUB_TOKEN and GITHUB_TOKEN in text:
+        text = text.replace(GITHUB_TOKEN, '***TOKEN***')
     return text
 
 
@@ -57,13 +57,12 @@ def run_git(
     
     # Set up environment with token if needed
     env = os.environ.copy()
-    token = getattr(config, 'GITHUB_TOKEN', None)
-    
-    if inject_auth and token:
+
+    if inject_auth and GITHUB_TOKEN:
         # Use credential helper to inject token
         env['GIT_ASKPASS'] = 'echo'
         env['GIT_USERNAME'] = 'x-access-token'
-        env['GIT_PASSWORD'] = token
+        env['GIT_PASSWORD'] = GITHUB_TOKEN
     
     try:
         result = subprocess.run(

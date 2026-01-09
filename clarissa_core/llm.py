@@ -4,6 +4,7 @@ Provides unified interface to multiple LLM providers:
 - OpenRouter (default)
 - NanoGPT
 - Custom OpenAI-compatible endpoints
+- Anthropic (native SDK with base_url support for clewdr)
 
 Also supports tool calling with format conversion for Claude proxies.
 
@@ -20,9 +21,11 @@ import os
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Literal
 
+from anthropic import Anthropic
 from openai import OpenAI
 
 if TYPE_CHECKING:
+    import anthropic.types
     from openai.types.chat import ChatCompletion
 
 # Model tier type
@@ -52,6 +55,11 @@ DEFAULT_MODELS = {
         "mid": "gpt-4o",
         "low": "gpt-4o-mini",
     },
+    "anthropic": {
+        "high": "claude-opus-4-5-20250514",
+        "mid": "claude-sonnet-4-20250514",
+        "low": "claude-haiku-3-5-20241022",
+    },
 }
 
 # Global clients for reuse (lazy initialization)
@@ -59,6 +67,8 @@ _openrouter_client: OpenAI | None = None
 _nanogpt_client: OpenAI | None = None
 _custom_openai_client: OpenAI | None = None
 _openai_tool_client: OpenAI | None = None
+_anthropic_client: Anthropic | None = None
+_anthropic_tool_client: Anthropic | None = None
 
 
 def _get_openrouter_client() -> OpenAI:
@@ -134,6 +144,9 @@ def _get_openai_tool_client() -> OpenAI:
         elif provider == "nanogpt":
             default_key = os.getenv("NANOGPT_API_KEY")
             default_url = "https://nano-gpt.com/api/v1"
+        elif provider == "anthropic":
+            default_key = os.getenv("ANTHROPIC_API_KEY")
+            default_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
         else:  # openrouter
             default_key = os.getenv("OPENROUTER_API_KEY")
             default_url = "https://openrouter.ai/api/v1"
@@ -154,17 +167,124 @@ def _get_openai_tool_client() -> OpenAI:
             "api_key": api_key,
         }
 
-        # Add OpenRouter headers if using OpenRouter
+        # Add provider-specific headers
+        headers = {}
         if "openrouter.ai" in base_url:
             site = os.getenv("OPENROUTER_SITE", "http://localhost:3000")
             title = os.getenv("OPENROUTER_TITLE", "MyPalClarissa")
-            client_kwargs["default_headers"] = {
+            headers = {
                 "HTTP-Referer": site,
                 "X-Title": title,
             }
+        elif provider == "anthropic":
+            # Add Cloudflare Access headers if configured
+            cf_headers = _get_cf_access_headers()
+            if cf_headers:
+                headers.update(cf_headers)
+            # Override User-Agent to avoid Cloudflare bot detection
+            if base_url and base_url != "https://api.anthropic.com":
+                headers["User-Agent"] = "Clarissa/1.0"
+
+        if headers:
+            client_kwargs["default_headers"] = headers
 
         _openai_tool_client = OpenAI(**client_kwargs)
     return _openai_tool_client
+
+
+def _get_cf_access_headers() -> dict[str, str] | None:
+    """Get Cloudflare Access headers if configured.
+
+    For endpoints behind Cloudflare Access (like cloudflared tunnels),
+    set these environment variables:
+    - CF_ACCESS_CLIENT_ID: Service token client ID
+    - CF_ACCESS_CLIENT_SECRET: Service token client secret
+    """
+    client_id = os.getenv("CF_ACCESS_CLIENT_ID")
+    client_secret = os.getenv("CF_ACCESS_CLIENT_SECRET")
+    if client_id and client_secret:
+        return {
+            "CF-Access-Client-Id": client_id,
+            "CF-Access-Client-Secret": client_secret,
+        }
+    return None
+
+
+def _get_anthropic_client() -> Anthropic:
+    """Get or create native Anthropic client.
+
+    Supports custom base_url for proxies like clewdr via ANTHROPIC_BASE_URL.
+    """
+    global _anthropic_client
+    if _anthropic_client is None:
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise RuntimeError("ANTHROPIC_API_KEY is not set")
+
+        base_url = os.getenv("ANTHROPIC_BASE_URL")
+
+        client_kwargs: dict = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        # Build default headers
+        headers = {}
+
+        # Add Cloudflare Access headers if configured
+        cf_headers = _get_cf_access_headers()
+        if cf_headers:
+            headers.update(cf_headers)
+
+        # Override User-Agent to avoid Cloudflare bot detection
+        if base_url:
+            headers["User-Agent"] = "Clarissa/1.0"
+
+        if headers:
+            client_kwargs["default_headers"] = headers
+
+        _anthropic_client = Anthropic(**client_kwargs)
+    return _anthropic_client
+
+
+def _get_anthropic_tool_client() -> Anthropic:
+    """Get or create dedicated Anthropic client for tool calling.
+
+    By default, uses the same endpoint as main Anthropic client.
+    Can be overridden with explicit TOOL_* environment variables.
+    """
+    global _anthropic_tool_client
+    if _anthropic_tool_client is None:
+        # Use explicit TOOL_* config or fall back to main Anthropic config
+        api_key = os.getenv("TOOL_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+        base_url = os.getenv("TOOL_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
+
+        if not api_key:
+            raise RuntimeError(
+                "No API key found for Anthropic tool calling. "
+                "Set TOOL_API_KEY or ANTHROPIC_API_KEY."
+            )
+
+        client_kwargs: dict = {"api_key": api_key}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+
+        # Build default headers
+        headers = {}
+
+        # Add Cloudflare Access headers if configured
+        cf_headers = _get_cf_access_headers()
+        if cf_headers:
+            headers.update(cf_headers)
+
+        # Override User-Agent to avoid Cloudflare bot detection
+        if base_url:
+            headers["User-Agent"] = "Clarissa/1.0"
+
+        if headers:
+            client_kwargs["default_headers"] = headers
+
+        _anthropic_tool_client = Anthropic(**client_kwargs)
+    return _anthropic_tool_client
 
 
 # ============== Model Tier Support ==============
@@ -224,6 +344,14 @@ def get_model_for_tier(tier: ModelTier, provider: str | None = None) -> str:
             return os.getenv("CUSTOM_OPENAI_MODEL", DEFAULT_MODELS["openai"]["mid"])
         return DEFAULT_MODELS["openai"].get(tier, DEFAULT_MODELS["openai"]["mid"])
 
+    elif provider == "anthropic":
+        tier_model = os.getenv(f"ANTHROPIC_MODEL_{tier_upper}")
+        if tier_model:
+            return tier_model
+        if tier == "mid":
+            return os.getenv("ANTHROPIC_MODEL", DEFAULT_MODELS["anthropic"]["mid"])
+        return DEFAULT_MODELS["anthropic"].get(tier, DEFAULT_MODELS["anthropic"]["mid"])
+
     else:
         raise ValueError(f"Unknown provider: {provider}")
 
@@ -260,6 +388,7 @@ def make_llm(tier: ModelTier | None = None) -> Callable[[list[dict[str, str]]], 
       - "openrouter" (default)
       - "nanogpt"
       - "openai" (custom OpenAI-compatible endpoint)
+      - "anthropic" (native Anthropic SDK)
 
     Args:
         tier: Optional model tier ("high", "mid", "low").
@@ -275,6 +404,8 @@ def make_llm(tier: ModelTier | None = None) -> Callable[[list[dict[str, str]]], 
         return _make_nanogpt_llm_with_model(model)
     elif provider == "openai":
         return _make_custom_openai_llm_with_model(model)
+    elif provider == "anthropic":
+        return _make_anthropic_llm_with_model(model)
     else:
         raise ValueError(f"Unknown LLM_PROVIDER={provider}")
 
@@ -328,6 +459,42 @@ def _make_custom_openai_llm_with_model(
     return llm
 
 
+def _make_anthropic_llm_with_model(
+    model: str,
+) -> Callable[[list[dict[str, str]]], str]:
+    """Non-streaming native Anthropic LLM with specified model.
+
+    Handles system message extraction (Anthropic uses separate system param).
+    """
+    client = _get_anthropic_client()
+
+    def llm(messages: list[dict[str, str]]) -> str:
+        # Extract system messages (Anthropic handles it separately)
+        # Concatenate multiple system messages since build_prompt creates two
+        system_parts = []
+        filtered = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_parts.append(m.get("content", ""))
+            else:
+                filtered.append(m)
+        system = "\n\n".join(system_parts)
+
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": filtered,
+        }
+        if system:
+            kwargs["system"] = system
+
+        resp = client.messages.create(**kwargs)
+        # Anthropic returns content blocks, extract text
+        return resp.content[0].text if resp.content else ""
+
+    return llm
+
+
 # ============== Streaming LLM ==============
 
 
@@ -350,6 +517,8 @@ def make_llm_streaming(
         return _make_nanogpt_llm_streaming_with_model(model)
     elif provider == "openai":
         return _make_custom_openai_llm_streaming_with_model(model)
+    elif provider == "anthropic":
+        return _make_anthropic_llm_streaming_with_model(model)
     else:
         raise ValueError(f"Streaming not supported for LLM_PROVIDER={provider}")
 
@@ -411,6 +580,38 @@ def _make_custom_openai_llm_streaming_with_model(
         for chunk in stream:
             if chunk.choices and chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
+
+    return llm
+
+
+def _make_anthropic_llm_streaming_with_model(
+    model: str,
+) -> Callable[[list[dict[str, str]]], Generator[str, None, None]]:
+    """Streaming native Anthropic LLM with specified model."""
+    client = _get_anthropic_client()
+
+    def llm(messages: list[dict[str, str]]) -> Generator[str, None, None]:
+        # Extract system messages (Anthropic handles it separately)
+        # Concatenate multiple system messages since build_prompt creates two
+        system_parts = []
+        filtered = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_parts.append(m.get("content", ""))
+            else:
+                filtered.append(m)
+        system = "\n\n".join(system_parts)
+
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": filtered,
+        }
+        if system:
+            kwargs["system"] = system
+
+        with client.messages.stream(**kwargs) as stream:
+            yield from stream.text_stream
 
     return llm
 
@@ -546,14 +747,12 @@ def _get_tool_model(tier: ModelTier | None = None) -> str:
 def make_llm_with_tools(
     tools: list[dict] | None = None,
     tier: ModelTier | None = None,
-) -> Callable[[list[dict]], "ChatCompletion"]:
-    """Return a function(messages) -> ChatCompletion that supports tool calling.
+) -> Callable[[list[dict]], ChatCompletion | dict]:
+    """Return a function(messages) -> ChatCompletion/dict that supports tool calling.
 
     Uses the same endpoint as your main chat LLM by default.
-    Set TOOL_FORMAT=claude if using a Claude proxy (like clewdr).
-
-    The returned function takes messages and returns the full ChatCompletion
-    object so the caller can handle tool_calls if present.
+    For Anthropic provider, uses native Anthropic SDK and converts response to
+    OpenAI-compatible format for unified handling.
 
     Args:
         tools: List of tool definitions in OpenAI format. If None, no tools.
@@ -562,12 +761,28 @@ def make_llm_with_tools(
 
     Returns:
         Function that calls the LLM with tool support.
+        Returns ChatCompletion for OpenAI-compatible providers,
+        or dict (OpenAI-compatible format) for Anthropic.
     """
+    provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+    # For Anthropic provider, use native Anthropic SDK
+    if provider == "anthropic":
+        anthropic_llm = make_llm_with_tools_anthropic(tools, tier)
+
+        def llm_anthropic(messages: list[dict]) -> _MockCompletion:
+            response = anthropic_llm(messages)
+            # Convert Anthropic response to OpenAI-compatible format
+            return anthropic_to_openai_response(response)
+
+        return llm_anthropic
+
+    # For other providers, use OpenAI-compatible client
     client = _get_openai_tool_client()
     tool_model = _get_tool_model(tier)
     tool_format = os.getenv("TOOL_FORMAT", "openai").lower()
 
-    def llm(messages: list[dict]) -> "ChatCompletion":
+    def llm(messages: list[dict]) -> ChatCompletion:
         if tool_format == "claude":
             # Convert messages and tools to Claude format for proxies like clewdr
             converted_messages = _convert_messages_to_claude_format(messages)
@@ -581,3 +796,176 @@ def make_llm_with_tools(
         return client.chat.completions.create(**kwargs)
 
     return llm
+
+
+# ============== Native Anthropic Tool Calling ==============
+
+
+def _convert_message_to_anthropic(msg: dict) -> dict:
+    """Convert a single OpenAI-style message to Anthropic format.
+
+    Handles:
+    - Assistant messages with tool_calls -> assistant with tool_use content blocks
+    - Tool role messages -> user messages with tool_result content blocks
+    - Regular messages -> pass through
+    """
+    role = msg.get("role")
+
+    if role == "assistant" and msg.get("tool_calls"):
+        # Convert assistant with tool_calls to Claude format
+        content = []
+        if msg.get("content"):
+            content.append({"type": "text", "text": msg["content"]})
+        for tc in msg["tool_calls"]:
+            content.append(
+                {
+                    "type": "tool_use",
+                    "id": tc["id"],
+                    "name": tc["function"]["name"],
+                    "input": json.loads(tc["function"]["arguments"]),
+                }
+            )
+        return {"role": "assistant", "content": content}
+
+    elif role == "tool":
+        # Convert tool result to user message with tool_result
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": msg["tool_call_id"],
+                    "content": msg.get("content", ""),
+                }
+            ],
+        }
+
+    return msg
+
+
+def make_llm_with_tools_anthropic(
+    tools: list[dict] | None = None,
+    tier: ModelTier | None = None,
+) -> Callable[[list[dict]], anthropic.types.Message]:
+    """Return a function(messages) -> anthropic.types.Message for native tool calling.
+
+    Uses the native Anthropic SDK with native Claude tool format.
+    Unlike make_llm_with_tools(), this returns Anthropic Message objects directly.
+
+    Args:
+        tools: List of tool definitions in OpenAI format (will be converted).
+        tier: Optional model tier ("high", "mid", "low").
+              If None, uses MODEL_TIER env var if set, otherwise uses mid tier.
+
+    Returns:
+        Function that calls Anthropic with native tool support.
+    """
+    client = _get_anthropic_tool_client()
+
+    effective_tier = tier or get_current_tier()
+    model = get_model_for_tier(effective_tier, "anthropic")
+
+    def llm(messages: list[dict]) -> anthropic.types.Message:
+        # Extract system messages (Anthropic handles it separately)
+        # Concatenate multiple system messages since build_prompt creates two
+        system_parts = []
+        filtered = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_parts.append(m.get("content", ""))
+            else:
+                filtered.append(_convert_message_to_anthropic(m))
+        system = "\n\n".join(system_parts)
+
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": filtered,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = _convert_tools_to_claude_format(tools)
+
+        return client.messages.create(**kwargs)
+
+    return llm
+
+
+class _MockFunction:
+    """Mock OpenAI function object for Anthropic compatibility."""
+
+    def __init__(self, name: str, arguments: str):
+        self.name = name
+        self.arguments = arguments
+
+
+class _MockToolCall:
+    """Mock OpenAI tool call object for Anthropic compatibility."""
+
+    def __init__(self, id: str, name: str, arguments: str):
+        self.id = id
+        self.type = "function"
+        self.function = _MockFunction(name, arguments)
+
+
+class _MockMessage:
+    """Mock OpenAI message object for Anthropic compatibility."""
+
+    def __init__(self, content: str | None, role: str, tool_calls: list | None):
+        self.content = content
+        self.role = role
+        self.tool_calls = tool_calls
+
+
+class _MockChoice:
+    """Mock OpenAI choice object for Anthropic compatibility."""
+
+    def __init__(self, message: _MockMessage):
+        self.message = message
+        self.index = 0
+        self.finish_reason = "stop"
+
+
+class _MockCompletion:
+    """Mock OpenAI ChatCompletion object for Anthropic compatibility."""
+
+    def __init__(self, message: _MockMessage):
+        self.choices = [_MockChoice(message)]
+        self.model = "anthropic"
+        self.id = "anthropic-response"
+
+
+def anthropic_to_openai_response(msg: anthropic.types.Message) -> _MockCompletion:
+    """Convert Anthropic Message to OpenAI-like ChatCompletion for compatibility.
+
+    This allows the Discord bot to process Anthropic responses using the same
+    code path as OpenAI responses.
+
+    Returns a mock ChatCompletion object with:
+    - choices[0].message.content: text content (or None)
+    - choices[0].message.role: "assistant"
+    - choices[0].message.tool_calls: list of tool calls in OpenAI format (if any)
+    """
+    tool_calls = []
+    text_content = ""
+
+    for block in msg.content:
+        if block.type == "text":
+            text_content += block.text
+        elif block.type == "tool_use":
+            tool_calls.append(
+                _MockToolCall(
+                    id=block.id,
+                    name=block.name,
+                    arguments=json.dumps(block.input),
+                )
+            )
+
+    message = _MockMessage(
+        content=text_content or None,
+        role="assistant",
+        tool_calls=tool_calls if tool_calls else None,
+    )
+
+    return _MockCompletion(message)
