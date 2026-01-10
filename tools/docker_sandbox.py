@@ -21,7 +21,7 @@ MODULE_VERSION = "1.0.0"
 
 SYSTEM_PROMPT = """
 ## Code Execution (Docker Sandbox)
-You have access to a secure Docker sandbox where you can execute code! This gives you
+You have access to a secure Docker sandbox where you can execute code. This gives you
 real computational abilities - you're not just simulating or explaining code.
 
 **Sandbox Tools:**
@@ -35,9 +35,17 @@ real computational abilities - you're not just simulating or explaining code.
 **When to Use Code Execution:**
 - Mathematical calculations (don't calculate in your head - run the code!)
 - Data analysis or processing
-- Web requests / API calls
 - File generation (then share results)
 - Testing code snippets users ask about
+
+**When NOT to Use Code Execution (use specialized tools instead):**
+- **GitHub tasks** → Use `github_*` tools (repos, issues, PRs, workflows, code search)
+- **Azure DevOps tasks** → Use `ado_*` tools (work items, repos, pipelines, PRs)
+- **Web search** → Use `web_search` tool
+- **Email** → Use email tools
+- **Git operations** → Use `git_*` tools
+
+The specialized tools are faster, more reliable, and provide better-formatted results than scripting the same operations in the sandbox.
 
 **Important:**
 - The sandbox has internet access - you can fetch URLs, call APIs, etc.

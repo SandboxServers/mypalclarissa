@@ -25,6 +25,15 @@ SYSTEM_PROMPT = """
 ## GitHub Integration
 You can interact with GitHub repositories, issues, pull requests, and workflows.
 
+**ALWAYS use these tools for GitHub tasks** - they are faster, more reliable, and provide better-formatted results than using the sandbox to make API calls.
+
+**When to Use GitHub Tools:**
+- Viewing or searching repositories, issues, PRs, or code
+- Creating or updating issues and pull requests
+- Reading files from repos or viewing commit history
+- Checking workflow runs or triggering workflows
+- Managing gists or viewing notifications
+
 **Repository Tools:**
 - `github_search_repositories` - Search for repositories
 - `github_get_repository` - Get repo details (stats, description, topics)

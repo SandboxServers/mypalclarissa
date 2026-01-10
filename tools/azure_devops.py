@@ -27,6 +27,15 @@ SYSTEM_PROMPT = """
 ## Azure DevOps Integration
 You can interact with Azure DevOps projects, repos, work items, and pipelines.
 
+**ALWAYS use these tools for Azure DevOps tasks** - they are faster, more reliable, and provide better-formatted results than using the sandbox to make API calls.
+
+**When to Use Azure DevOps Tools:**
+- Viewing or managing work items (tasks, bugs, user stories)
+- Listing or searching repositories, branches, or code
+- Creating or reviewing pull requests
+- Checking pipeline/build status or triggering runs
+- Reading or editing wiki pages
+
 **Projects & Teams:**
 - `ado_list_projects` - List all projects in the organization
 - `ado_list_project_teams` - List teams in a project
