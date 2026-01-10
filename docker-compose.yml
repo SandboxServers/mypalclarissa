@@ -255,6 +255,8 @@ services:
       # KIRA-inspired features
       - AUTO_TIER_ENABLED=${AUTO_TIER_ENABLED:-true}
       - AUTO_TIER_SHOW_SELECTION=${AUTO_TIER_SHOW_SELECTION:-false}
+      # Task planning
+      - PLANNING_FILES_ENABLED=${PLANNING_FILES_ENABLED:-true}
       # Proactive monitoring
       - PROACTIVE_ENABLED=${PROACTIVE_ENABLED:-true}
       - PROACTIVE_QUIET_START=${PROACTIVE_QUIET_START:-22}

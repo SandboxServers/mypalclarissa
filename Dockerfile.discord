@@ -41,6 +41,7 @@ COPY db/ ./db/
 COPY sandbox/ ./sandbox/
 COPY storage/ ./storage/
 COPY tools/ ./tools/
+COPY checkers/ ./checkers/
 COPY personalities/ ./personalities/
 COPY VERSION ./
 
