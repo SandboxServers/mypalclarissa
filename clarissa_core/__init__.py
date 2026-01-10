@@ -65,6 +65,21 @@ from clarissa_core.pipeline import (
     configure_pipeline,
 )
 
+# Multi-user / group chat components
+from clarissa_core.rejection import (
+    RejectionClassifier,
+    RejectionCode,
+    RejectionResult,
+    get_rejection_classifier,
+    should_respond,
+)
+from clarissa_core.group_session import (
+    GroupSession,
+    Participant,
+    get_group_session,
+    cleanup_stale_sessions,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -106,4 +121,14 @@ __all__ = [
     "PipelineResult",
     "get_pipeline",
     "configure_pipeline",
+    # Multi-user / group chat
+    "RejectionClassifier",
+    "RejectionCode",
+    "RejectionResult",
+    "get_rejection_classifier",
+    "should_respond",
+    "GroupSession",
+    "Participant",
+    "get_group_session",
+    "cleanup_stale_sessions",
 ]

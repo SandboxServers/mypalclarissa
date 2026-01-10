@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 import discord
+from discord import app_commands
 import uvicorn
 from discord import Message as DiscordMessage
 from fastapi import FastAPI
@@ -65,6 +66,12 @@ from clarissa_core import (
     detect_intent,
     select_tier,
     get_tier_display,
+    # Multi-user / group chat handling
+    get_rejection_classifier,
+    should_respond,
+    RejectionCode,
+    get_group_session,
+    cleanup_stale_sessions,
 )
 
 # Initialize logging system
@@ -144,6 +151,16 @@ AUTO_CONTINUE_MAX = int(os.getenv("DISCORD_AUTO_CONTINUE_MAX", "3"))  # Max auto
 # Automatically select model tier based on task complexity
 AUTO_TIER_ENABLED = os.getenv("AUTO_TIER_ENABLED", "true").lower() == "true"
 AUTO_TIER_SHOW_SELECTION = os.getenv("AUTO_TIER_SHOW_SELECTION", "false").lower() == "true"  # Show auto-selected tier to user
+
+# Organic response system (HuixiangDou-inspired)
+# Allow bot to respond in group chats even without explicit mention, based on rejection classifier
+ORGANIC_RESPONSE_ENABLED = os.getenv("ORGANIC_RESPONSE_ENABLED", "true").lower() == "true"
+ORGANIC_CONFIDENCE_THRESHOLD = float(os.getenv("ORGANIC_CONFIDENCE_THRESHOLD", "0.4"))
+ORGANIC_COOLDOWN_MINUTES = int(os.getenv("ORGANIC_COOLDOWN_MINUTES", "3"))
+ORGANIC_DAILY_LIMIT = int(os.getenv("ORGANIC_DAILY_LIMIT", "50"))
+
+# Track organic responses per channel for rate limiting
+_organic_response_counts: dict[str, list[datetime]] = {}
 
 # Patterns that trigger auto-continue (case-insensitive, checked at end of response)
 AUTO_CONTINUE_PATTERNS = [
@@ -529,6 +546,10 @@ class ClarissaDiscordBot(discord.Client):
         intents.members = True
         super().__init__(intents=intents)
 
+        # Slash command tree
+        self.tree = app_commands.CommandTree(self)
+        self._setup_commands()
+
         # Message cache: discord_msg_id -> CachedMessage
         self.msg_cache: dict[int, CachedMessage] = {}
         self.cache_lock = asyncio.Lock()
@@ -536,6 +557,133 @@ class ClarissaDiscordBot(discord.Client):
         # Initialize Clarissa's unified platform (DB, LLM, MemoryManager, ToolRegistry)
         init_platform()
         self.mm = MemoryManager.get_instance()
+
+    def _setup_commands(self):
+        """Set up slash commands."""
+
+        @self.tree.command(name="sensitivity", description="Adjust Clarissa's response sensitivity for this channel")
+        @app_commands.describe(
+            level="Sensitivity level: lower = more responses, higher = more selective"
+        )
+        @app_commands.choices(level=[
+            app_commands.Choice(name="Very Chatty (0.2)", value="0.2"),
+            app_commands.Choice(name="Chatty (0.3)", value="0.3"),
+            app_commands.Choice(name="Balanced (0.35)", value="0.35"),
+            app_commands.Choice(name="Selective (0.4)", value="0.4"),
+            app_commands.Choice(name="Quiet (0.5)", value="0.5"),
+        ])
+        async def sensitivity_cmd(interaction: discord.Interaction, level: str):
+            """Adjust organic response sensitivity for this channel."""
+            from db.models import ChannelSettings
+
+            channel_id = str(interaction.channel_id)
+            guild_id = str(interaction.guild_id) if interaction.guild_id else None
+
+            db = SessionLocal()
+            try:
+                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                if not settings:
+                    settings = ChannelSettings(
+                        channel_id=channel_id,
+                        guild_id=guild_id,
+                    )
+                    db.add(settings)
+
+                settings.reject_throttle = level
+                db.commit()
+
+                level_float = float(level)
+                if level_float <= 0.25:
+                    desc = "very chatty"
+                elif level_float <= 0.35:
+                    desc = "balanced"
+                else:
+                    desc = "selective"
+
+                await interaction.response.send_message(
+                    f"Set organic response sensitivity to **{level}** ({desc}) for this channel.",
+                    ephemeral=True
+                )
+            except Exception as e:
+                logger.exception(f"Error updating sensitivity: {e}")
+                await interaction.response.send_message(
+                    f"Error updating sensitivity: {e}",
+                    ephemeral=True
+                )
+            finally:
+                db.close()
+
+        @self.tree.command(name="quiet", description="Toggle quiet mode - only respond when mentioned")
+        async def quiet_cmd(interaction: discord.Interaction):
+            """Toggle quiet mode for this channel."""
+            from db.models import ChannelSettings
+
+            channel_id = str(interaction.channel_id)
+            guild_id = str(interaction.guild_id) if interaction.guild_id else None
+
+            db = SessionLocal()
+            try:
+                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                if not settings:
+                    settings = ChannelSettings(
+                        channel_id=channel_id,
+                        guild_id=guild_id,
+                    )
+                    db.add(settings)
+
+                # Toggle quiet mode
+                current = settings.quiet_mode == "true"
+                settings.quiet_mode = "false" if current else "true"
+                db.commit()
+
+                if settings.quiet_mode == "true":
+                    await interaction.response.send_message(
+                        "Quiet mode **enabled**. I'll only respond when mentioned or replied to.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.response.send_message(
+                        "Quiet mode **disabled**. I may respond organically to relevant conversations.",
+                        ephemeral=True
+                    )
+            except Exception as e:
+                logger.exception(f"Error toggling quiet mode: {e}")
+                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+            finally:
+                db.close()
+
+        @self.tree.command(name="stats", description="Show Clarissa's activity stats for this channel")
+        async def stats_cmd(interaction: discord.Interaction):
+            """Show channel statistics."""
+            from db.models import ChannelSettings
+
+            channel_id = str(interaction.channel_id)
+            db = SessionLocal()
+            try:
+                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+
+                if settings:
+                    response_rate = (
+                        settings.total_responses / settings.total_messages_seen * 100
+                        if settings.total_messages_seen > 0 else 0
+                    )
+                    msg = (
+                        f"**Channel Stats**\n"
+                        f"Messages seen: {settings.total_messages_seen}\n"
+                        f"Responses: {settings.total_responses}\n"
+                        f"Rejections: {settings.total_rejections}\n"
+                        f"Response rate: {response_rate:.1f}%\n"
+                        f"Sensitivity: {settings.reject_throttle}\n"
+                        f"Quiet mode: {settings.quiet_mode}"
+                    )
+                else:
+                    msg = "No stats available for this channel yet."
+
+                await interaction.response.send_message(msg, ephemeral=True)
+            except Exception as e:
+                await interaction.response.send_message(f"Error: {e}", ephemeral=True)
+            finally:
+                db.close()
 
     def _sync_llm(self, messages: list[dict]) -> str:
         """Synchronous LLM call for MemoryManager."""
@@ -696,6 +844,13 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
             invite = f"https://discord.com/oauth2/authorize?client_id={CLIENT_ID}&permissions=274877991936&scope=bot"
             logger.info(f"Invite URL: {invite}")
 
+        # Sync slash commands
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Synced {len(synced)} slash commands")
+        except Exception as e:
+            logger.warning(f"Failed to sync slash commands: {e}")
+
         # Initialize modular tools system (GitHub, ADO, etc.)
         await init_modular_tools()
 
@@ -739,8 +894,24 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
         # Check if this is a DM
         is_dm = message.guild is None
 
+        # Track message in group session (for context and coreference)
+        if not is_dm:
+            thread_id = str(message.channel.id) if hasattr(message.channel, 'parent') else None
+            group_session = get_group_session(
+                channel_id=str(message.channel.id),
+                thread_id=thread_id,
+            )
+            group_session.add_message(
+                message_id=str(message.id),
+                author_id=str(message.author.id),
+                author_name=message.author.display_name,
+                content=message.content,
+                timestamp=message.created_at.replace(tzinfo=None),
+            )
+
         # For DMs: always respond (no mention needed)
-        # For channels: require mention or reply
+        # For channels: require mention, reply, or organic response
+        is_organic = False
         if not is_dm:
             is_mentioned = self.user.mentioned_in(message)
             is_reply_to_bot = (
@@ -751,8 +922,52 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
 
             logger.debug(f"mentioned={is_mentioned}, reply_to_bot={is_reply_to_bot}")
 
+            # If not explicitly mentioned, check organic response
             if not is_mentioned and not is_reply_to_bot:
-                return
+                if ORGANIC_RESPONSE_ENABLED:
+                    # Use rejection classifier to determine if we should respond
+                    rejection_result = should_respond(
+                        message=message.content,
+                        context={
+                            "is_dm": False,
+                            "is_mentioned": False,
+                            "is_reply": False,
+                            "bot_name": self.user.display_name,
+                            "channel_throttle": ORGANIC_CONFIDENCE_THRESHOLD,
+                        },
+                    )
+
+                    if rejection_result.should_respond:
+                        # Check rate limiting for organic responses
+                        channel_key = str(message.channel.id)
+                        now = datetime.now(UTC)
+
+                        # Clean old entries
+                        if channel_key in _organic_response_counts:
+                            _organic_response_counts[channel_key] = [
+                                t for t in _organic_response_counts[channel_key]
+                                if now - t < timedelta(minutes=ORGANIC_COOLDOWN_MINUTES)
+                            ]
+                        else:
+                            _organic_response_counts[channel_key] = []
+
+                        # Check daily limit
+                        today_count = len([
+                            t for t in _organic_response_counts.get(channel_key, [])
+                            if now - t < timedelta(days=1)
+                        ])
+
+                        if today_count < ORGANIC_DAILY_LIMIT and len(_organic_response_counts[channel_key]) == 0:
+                            is_organic = True
+                            _organic_response_counts[channel_key].append(now)
+                            logger.info(f"Organic response triggered: {rejection_result.reason}")
+                        else:
+                            logger.debug(f"Organic response rate limited (daily={today_count}, cooldown={len(_organic_response_counts[channel_key])})")
+                    else:
+                        logger.debug(f"Organic response rejected: {rejection_result.code.value} - {rejection_result.reason}")
+
+                if not is_organic:
+                    return
 
             # Check channel permissions (only for non-DM)
             if ALLOWED_CHANNELS:

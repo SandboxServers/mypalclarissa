@@ -130,3 +130,72 @@ class CheckerState(Base):
     state_key = Column(String, nullable=False)  # e.g., "last_notification_id"
     state_value = Column(Text, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+# =============================================================================
+# Multi-User / Group Chat Settings
+# =============================================================================
+
+
+class ChannelSettings(Base):
+    """Per-channel settings for response behavior.
+
+    Inspired by HuixiangDou's rejection throttle system.
+    """
+
+    __tablename__ = "channel_settings"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    channel_id = Column(String, nullable=False, unique=True, index=True)
+    guild_id = Column(String, nullable=True, index=True)  # Discord server ID
+
+    # Rejection throttle (0.0-1.0): higher = more selective, fewer responses
+    # Default 0.35, range 0.1-0.6
+    reject_throttle = Column(String, default="0.35", nullable=False)
+
+    # Response mode: "active" (respond proactively), "passive" (only when mentioned)
+    response_mode = Column(String, default="active", nullable=False)
+
+    # Maximum responses per minute (rate limiting)
+    max_responses_per_minute = Column(Integer, default=10, nullable=False)
+
+    # Quiet mode: only respond to direct mentions
+    quiet_mode = Column(String, default="false", nullable=False)
+
+    # Channel-specific personality adjustments (JSON)
+    personality_overrides = Column(Text, nullable=True)
+
+    # Statistics
+    total_messages_seen = Column(Integer, default=0, nullable=False)
+    total_responses = Column(Integer, default=0, nullable=False)
+    total_rejections = Column(Integer, default=0, nullable=False)
+    badcase_count = Column(Integer, default=0, nullable=False)
+
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class ParticipantStats(Base):
+    """Track participant activity for multi-user context.
+
+    Helps with coreference resolution and personalized responses.
+    """
+
+    __tablename__ = "participant_stats"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    channel_id = Column(String, nullable=False, index=True)
+    display_name = Column(String, nullable=True)
+
+    # Activity tracking
+    message_count = Column(Integer, default=0, nullable=False)
+    last_message_at = Column(DateTime, nullable=True)
+    first_seen_at = Column(DateTime, default=utcnow, nullable=False)
+
+    # Interaction with bot
+    bot_mentions = Column(Integer, default=0, nullable=False)
+    bot_replies_received = Column(Integer, default=0, nullable=False)
+
+    # Preferences (learned from interactions)
+    preferred_response_style = Column(String, nullable=True)  # brief, detailed, casual, formal
