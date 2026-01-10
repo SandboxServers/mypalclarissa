@@ -228,6 +228,23 @@ Files are organized per-user. Discord attachments are automatically saved locall
 - `upload_to_sandbox` - Upload local file to Docker sandbox
 - `send_local_file` - Send a saved file to Discord chat
 
+### Task Planning (Discord Bot)
+Clarissa can maintain persistent working memory for complex tasks using markdown files.
+Inspired by [Manus AI's Planning with Files](https://github.com/OthmanAdi/planning-with-files).
+
+- `PLANNING_FILES_ENABLED` - Enable planning tools (default: true)
+
+**Planning Tools:**
+- `create_task_plan` - Create a new plan with goals and phases
+- `get_current_plan` - Read the active task plan
+- `update_plan` - Update a section (goals, phases, decisions, blockers, notes)
+- `add_finding` - Record research findings (follow 2-action rule)
+- `get_findings` - Read all findings
+- `log_progress` - Log actions and results
+- `get_progress` - Read the progress log
+- `complete_task` - Mark task complete and archive
+- `list_plans` - List active and archived plans
+
 ### GitHub Integration (Discord Bot)
 Clarissa can interact with GitHub repositories, issues, PRs, and workflows:
 - `GITHUB_TOKEN` - GitHub Personal Access Token (required for GitHub tools)

@@ -41,6 +41,20 @@ Inspired by [HuixiangDou](https://github.com/InternLM/HuixiangDou), Clarissa han
 - **Azure DevOps** - Work items, repos, pipelines, wikis
 - **Email** - Monitoring and auto-response
 
+### Task Planning
+Inspired by [Manus AI's Planning with Files](https://github.com/OthmanAdi/planning-with-files), Clarissa uses persistent markdown files as working memory for complex tasks:
+
+**The 3-File System:**
+- `task_plan.md` - Goals, phases, decisions, blockers
+- `findings.md` - Research results, technical decisions, resources
+- `progress.md` - Action log, results, errors encountered
+
+**Best Practices:**
+- Create a plan at the start of complex tasks
+- Follow the 2-action rule: update findings after every 2 research operations
+- Log progress after significant actions
+- Mark tasks complete when done
+
 ### Proactive Monitoring
 Background checkers that notify you of important updates:
 
@@ -116,6 +130,11 @@ ORGANIC_RESPONSE_ENABLED=true   # Respond without @ mentions
 ORGANIC_CONFIDENCE_THRESHOLD=0.4  # Min confidence to respond (0.0-1.0)
 ORGANIC_COOLDOWN_MINUTES=3      # Cooldown between organic responses
 ORGANIC_DAILY_LIMIT=50          # Max organic responses per day
+```
+
+### Task Planning
+```bash
+PLANNING_FILES_ENABLED=true     # Enable planning file tools
 ```
 
 ### Proactive Monitoring
@@ -203,6 +222,7 @@ poetry run python clear_dbs.py --user X  # Specific user
 ├── tools/                 # Tool definitions
 │   ├── github/           # GitHub integration
 │   ├── ado/              # Azure DevOps integration
+│   ├── planning/         # Task planning tools
 │   └── ...
 ├── checkers/             # Proactive monitoring
 │   ├── github.py
