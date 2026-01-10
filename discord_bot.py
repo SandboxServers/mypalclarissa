@@ -2675,6 +2675,9 @@ async def async_main():
     elif provider == "nanogpt":
         tool_base_url = "https://nano-gpt.com/api/v1"
         tool_source = "main LLM"
+    elif provider == "anthropic":
+        tool_base_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
+        tool_source = "main LLM"
     else:
         tool_base_url = "https://openrouter.ai/api/v1"
         tool_source = "main LLM"

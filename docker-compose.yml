@@ -51,18 +51,27 @@ services:
       # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
       # OpenRouter (when LLM_PROVIDER=openrouter)
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
       - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
       - OPENROUTER_TITLE=${OPENROUTER_TITLE:-MyPalClarissa}
       # NanoGPT (when LLM_PROVIDER=nanogpt)
-      - NANOGPT_API_KEY=${NANOGPT_API_KEY}
+      - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
       - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
       - NANOGPT_MEM0_MODEL=${NANOGPT_MEM0_MODEL:-openai/gpt-oss-120b}
       # Custom OpenAI (when LLM_PROVIDER=openai)
       - CUSTOM_OPENAI_API_KEY=${CUSTOM_OPENAI_API_KEY:-}
       - CUSTOM_OPENAI_BASE_URL=${CUSTOM_OPENAI_BASE_URL:-https://api.openai.com/v1}
       - CUSTOM_OPENAI_MODEL=${CUSTOM_OPENAI_MODEL:-gpt-4o}
+      # Anthropic (when LLM_PROVIDER=anthropic)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      - ANTHROPIC_MODEL_HIGH=${ANTHROPIC_MODEL_HIGH:-}
+      - ANTHROPIC_MODEL_MID=${ANTHROPIC_MODEL_MID:-}
+      - ANTHROPIC_MODEL_LOW=${ANTHROPIC_MODEL_LOW:-}
+      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
+      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
       # OpenAI (for embeddings)
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # PostgreSQL (hardcoded for Docker - ignores .env localhost values)
@@ -106,13 +115,19 @@ services:
       # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
       # OpenRouter (when LLM_PROVIDER=openrouter)
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
       - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
       - OPENROUTER_TITLE=${OPENROUTER_TITLE:-MyPalClarissa}
       # NanoGPT (when LLM_PROVIDER=nanogpt)
-      - NANOGPT_API_KEY=${NANOGPT_API_KEY}
+      - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
       - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
+      # Anthropic (when LLM_PROVIDER=anthropic)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
+      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
       # Backend URL (server-side, internal Docker network)
       - BACKEND_URL=http://backend:8000
       # OpenAI (for embeddings - if needed)
@@ -134,6 +149,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.discord
+      args:
+        - PLAYWRIGHT_ENABLED=${PLAYWRIGHT_ENABLED:-false}
     container_name: mypalclarissa-discord
     profiles:
       - discord
@@ -159,7 +176,7 @@ services:
       # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
       # OpenRouter
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
       # NanoGPT
       - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
@@ -170,6 +187,15 @@ services:
       - CUSTOM_OPENAI_API_KEY=${CUSTOM_OPENAI_API_KEY:-}
       - CUSTOM_OPENAI_BASE_URL=${CUSTOM_OPENAI_BASE_URL:-https://api.openai.com/v1}
       - CUSTOM_OPENAI_MODEL=${CUSTOM_OPENAI_MODEL:-gpt-4o}
+      # Anthropic (when LLM_PROVIDER=anthropic)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      - ANTHROPIC_MODEL_HIGH=${ANTHROPIC_MODEL_HIGH:-}
+      - ANTHROPIC_MODEL_MID=${ANTHROPIC_MODEL_MID:-}
+      - ANTHROPIC_MODEL_LOW=${ANTHROPIC_MODEL_LOW:-}
+      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
+      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
       # Tool calling (set TOOL_FORMAT=claude for Claude proxies like clewdr)
       - TOOL_API_KEY=${TOOL_API_KEY:-}
       - TOOL_BASE_URL=${TOOL_BASE_URL:-}
@@ -212,6 +238,8 @@ services:
       # E2B sandbox (alternative to Docker)
       - E2B_API_KEY=${E2B_API_KEY:-}
       - E2B_TIMEOUT=${E2B_TIMEOUT:-300}
+      # Playwright browser automation (disabled by default for faster builds)
+      - PLAYWRIGHT_ENABLED=${PLAYWRIGHT_ENABLED:-false}
       # S3 storage (optional)
       - S3_ENABLED=${S3_ENABLED:-false}
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}

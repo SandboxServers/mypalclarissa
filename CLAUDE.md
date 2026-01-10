@@ -55,7 +55,7 @@ poetry run python clear_dbs.py --user <id> # Clear specific user
 - `discord_bot.py` - Discord bot with multi-user support, reply chains, and streaming responses
 - `discord_monitor.py` - Web dashboard for monitoring Discord bot status and activity
 - `memory_manager.py` - Core orchestrator: session handling, mem0 integration, prompt building with Clarissa's persona
-- `llm_backends.py` - LLM provider abstraction (OpenRouter, NanoGPT, custom OpenAI) - both streaming and non-streaming
+- `clarissa_core/llm.py` - LLM provider abstraction (OpenRouter, NanoGPT, custom OpenAI, Anthropic) - both streaming and non-streaming
 - `mem0_config.py` - mem0 memory system configuration (Qdrant/pgvector for vectors, OpenAI embeddings)
 - `models.py` - SQLAlchemy models: Project, Session, Message, ChannelSummary
 - `db.py` - Database setup (SQLite for dev, PostgreSQL for production)
@@ -93,7 +93,7 @@ Backend provides full CRUD for threads via `/api/threads` endpoints:
 
 ### Required
 - `OPENAI_API_KEY` - Always required for mem0 embeddings (text-embedding-3-small)
-- `LLM_PROVIDER` - Chat LLM provider: "openrouter" (default), "nanogpt", or "openai"
+- `LLM_PROVIDER` - Chat LLM provider: "openrouter" (default), "nanogpt", "openai", or "anthropic"
 
 ### Chat LLM Providers (based on LLM_PROVIDER)
 
@@ -111,6 +111,12 @@ Backend provides full CRUD for threads via `/api/threads` endpoints:
 - `CUSTOM_OPENAI_BASE_URL` - Base URL (default: https://api.openai.com/v1)
 - `CUSTOM_OPENAI_MODEL` - Chat model (default: gpt-4o)
 
+**Anthropic** (`LLM_PROVIDER=anthropic`):
+- `ANTHROPIC_API_KEY` - API key for Anthropic
+- `ANTHROPIC_BASE_URL` - Optional: custom base URL for proxies (e.g., clewdr)
+- `ANTHROPIC_MODEL` - Chat model (default: claude-sonnet-4-20250514)
+- `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` - Optional: Cloudflare Access headers for tunnels
+
 ### Model Tiers (Discord Bot)
 The Discord bot supports dynamic model selection via message prefixes:
 - `!high` or `!opus` → High tier (Opus-class, most capable)
@@ -121,6 +127,7 @@ Optional tier-specific model overrides:
 - `OPENROUTER_MODEL_HIGH`, `OPENROUTER_MODEL_MID`, `OPENROUTER_MODEL_LOW`
 - `NANOGPT_MODEL_HIGH`, `NANOGPT_MODEL_MID`, `NANOGPT_MODEL_LOW`
 - `CUSTOM_OPENAI_MODEL_HIGH`, `CUSTOM_OPENAI_MODEL_MID`, `CUSTOM_OPENAI_MODEL_LOW`
+- `ANTHROPIC_MODEL_HIGH`, `ANTHROPIC_MODEL_MID`, `ANTHROPIC_MODEL_LOW`
 - `MODEL_TIER` - Default tier when not specified (default: "mid")
 
 Example usage in Discord: `!high What is quantum entanglement?`
@@ -174,6 +181,16 @@ Tool calling requires Docker and a tool-capable LLM:
 - `DOCKER_SANDBOX_MEMORY` - Memory limit per container (default: 512m)
 - `DOCKER_SANDBOX_CPU` - CPU limit per container (default: 1.0)
 - `TAVILY_API_KEY` - Tavily API key for web search (optional but recommended)
+
+### Playwright Browser Automation (Discord Bot)
+Playwright enables web browsing, screenshots, and page scraping tools. Disabled by default to reduce Docker build time.
+- `PLAYWRIGHT_ENABLED` - Enable Playwright tools (default: false)
+
+To enable, set in `.env` before building:
+```bash
+PLAYWRIGHT_ENABLED=true
+docker-compose --profile discord build --no-cache
+```
 
 ### Tool Calling LLM
 By default, tool calling uses the **same endpoint and model as your main chat LLM**. This means if you're using a custom endpoint (like clewdr), tool calls go through it too.

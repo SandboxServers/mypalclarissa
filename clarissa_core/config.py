@@ -39,6 +39,11 @@ class ClarissaConfig:
     custom_openai_base_url: str = "https://api.openai.com/v1"
     custom_openai_model: str = "gpt-4o"
 
+    # Anthropic
+    anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
+    anthropic_model: str = "claude-sonnet-4-20250514"
+
     # OpenAI (for embeddings)
     openai_api_key: str = ""
 
@@ -137,6 +142,10 @@ class ClarissaConfig:
                 "CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1"
             ),
             custom_openai_model=os.getenv("CUSTOM_OPENAI_MODEL", "gpt-4o"),
+            # Anthropic
+            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
+            anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
+            anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
             # OpenAI
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             # Mem0 Provider
