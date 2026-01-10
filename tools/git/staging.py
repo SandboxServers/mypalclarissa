@@ -2,7 +2,11 @@
 Git staging operations.
 """
 
-from typing import Optional, List, Union
+import json
+from typing import Any, List, Optional, Union
+
+from tools._base import ToolContext, ToolDef
+
 from ._runner import run_git
 
 
@@ -12,23 +16,23 @@ def git_add(
 ) -> dict:
     """
     Stage files for commit.
-    
+
     Args:
         files: File(s) to stage - string or list (default: "." for all)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['add']
-    
+
     if isinstance(files, list):
         args.extend(files)
     else:
         args.append(files)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     return {
         'success': success,
         'message': "Files staged" if success else (stderr or "Failed to stage files")
@@ -42,31 +46,31 @@ def git_reset(
 ) -> dict:
     """
     Unstage files or reset to a commit.
-    
+
     Args:
         files: File(s) to unstage (default: all staged files)
         hard: Hard reset (WARNING: discards changes)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['reset']
-    
+
     if hard:
         args.append('--hard')
-    
+
     if files:
         args.append('--')
         if isinstance(files, list):
             args.extend(files)
         else:
             args.append(files)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     output = stdout or stderr
-    
+
     return {
         'success': success,
         'message': output.strip() if output else ("Reset complete" if success else "Reset failed")
@@ -81,45 +85,73 @@ def git_restore(
 ) -> dict:
     """
     Restore working tree files or unstage.
-    
+
     Args:
         files: File(s) to restore
         staged: Unstage files (keep changes in working tree)
         source: Restore from specific commit/branch
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['restore']
-    
+
     if staged:
         args.append('--staged')
-    
+
     if source:
         args.extend(['--source', source])
-    
+
     args.append('--')
-    
+
     if isinstance(files, list):
         args.extend(files)
     else:
         args.append(files)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     return {
         'success': success,
         'message': "Files restored" if success else (stderr or "Restore failed")
     }
 
 
+# Async handler wrappers for tool system
+async def _handle_git_add(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_add(
+        files=arguments.get("files", "."),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_reset(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_reset(
+        files=arguments.get("files"),
+        hard=arguments.get("hard", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_restore(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_restore(
+        files=arguments["files"],
+        staged=arguments.get("staged", False),
+        source=arguments.get("source"),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
 # Tool definitions
 TOOLS = [
-    {
-        "name": "git_add",
-        "description": "Stage files for commit.",
-        "parameters": {
+    ToolDef(
+        name="git_add",
+        description="Stage files for commit.",
+        parameters={
             "type": "object",
             "properties": {
                 "files": {
@@ -133,12 +165,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_add
-    },
-    {
-        "name": "git_reset",
-        "description": "Unstage files or reset to a commit.",
-        "parameters": {
+        handler=_handle_git_add,
+    ),
+    ToolDef(
+        name="git_reset",
+        description="Unstage files or reset to a commit.",
+        parameters={
             "type": "object",
             "properties": {
                 "files": {
@@ -156,12 +188,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_reset
-    },
-    {
-        "name": "git_restore",
-        "description": "Restore working tree files or unstage changes.",
-        "parameters": {
+        handler=_handle_git_reset,
+    ),
+    ToolDef(
+        name="git_restore",
+        description="Restore working tree files or unstage changes.",
+        parameters={
             "type": "object",
             "properties": {
                 "files": {
@@ -183,6 +215,6 @@ TOOLS = [
             },
             "required": ["files"]
         },
-        "function": git_restore
-    }
+        handler=_handle_git_restore,
+    ),
 ]

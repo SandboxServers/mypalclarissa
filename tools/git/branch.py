@@ -2,7 +2,11 @@
 Git branch operations.
 """
 
-from typing import Optional, List
+import json
+from typing import Any, Optional
+
+from tools._base import ToolContext, ToolDef
+
 from ._runner import run_git
 
 
@@ -12,38 +16,38 @@ def git_branch(
 ) -> dict:
     """
     List branches in the repository.
-    
+
     Args:
         list_all: Include remote branches
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'current', 'branches'
     """
     args = ['branch']
     if list_all:
         args.append('-a')
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     if not success:
         return {'success': False, 'current': None, 'branches': [], 'message': stderr}
-    
+
     branches = []
     current = None
-    
+
     for line in stdout.strip().split('\n'):
         if not line.strip():
             continue
-        
+
         is_current = line.startswith('*')
         branch_name = line.lstrip('* ').strip()
-        
+
         if is_current:
             current = branch_name
-        
+
         branches.append(branch_name)
-    
+
     return {
         'success': True,
         'current': current,
@@ -58,26 +62,26 @@ def git_checkout(
 ) -> dict:
     """
     Switch to a branch, optionally creating it.
-    
+
     Args:
         branch: Branch name to switch to
         create: Create the branch if it doesn't exist
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'branch', 'message'
     """
     args = ['checkout']
-    
+
     if create:
         args.append('-b')
-    
+
     args.append(branch)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     output = stdout or stderr
-    
+
     return {
         'success': success,
         'branch': branch if success else None,
@@ -92,22 +96,22 @@ def git_create_branch(
 ) -> dict:
     """
     Create a new branch without switching to it.
-    
+
     Args:
         branch: New branch name
         start_point: Starting commit/branch (default: HEAD)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'branch', 'message'
     """
     args = ['branch', branch]
-    
+
     if start_point:
         args.append(start_point)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     return {
         'success': success,
         'branch': branch if success else None,
@@ -115,12 +119,39 @@ def git_create_branch(
     }
 
 
+# Async handler wrappers for tool system
+async def _handle_git_branch(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_branch(
+        list_all=arguments.get("list_all", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_checkout(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_checkout(
+        branch=arguments["branch"],
+        create=arguments.get("create", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_create_branch(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_create_branch(
+        branch=arguments["branch"],
+        start_point=arguments.get("start_point"),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
 # Tool definitions
 TOOLS = [
-    {
-        "name": "git_branch",
-        "description": "List branches in the repository.",
-        "parameters": {
+    ToolDef(
+        name="git_branch",
+        description="List branches in the repository.",
+        parameters={
             "type": "object",
             "properties": {
                 "list_all": {
@@ -134,12 +165,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_branch
-    },
-    {
-        "name": "git_checkout",
-        "description": "Switch to a branch, optionally creating it.",
-        "parameters": {
+        handler=_handle_git_branch,
+    ),
+    ToolDef(
+        name="git_checkout",
+        description="Switch to a branch, optionally creating it.",
+        parameters={
             "type": "object",
             "properties": {
                 "branch": {
@@ -157,12 +188,12 @@ TOOLS = [
             },
             "required": ["branch"]
         },
-        "function": git_checkout
-    },
-    {
-        "name": "git_create_branch",
-        "description": "Create a new branch without switching to it.",
-        "parameters": {
+        handler=_handle_git_checkout,
+    ),
+    ToolDef(
+        name="git_create_branch",
+        description="Create a new branch without switching to it.",
+        parameters={
             "type": "object",
             "properties": {
                 "branch": {
@@ -180,6 +211,6 @@ TOOLS = [
             },
             "required": ["branch"]
         },
-        "function": git_create_branch
-    }
+        handler=_handle_git_create_branch,
+    ),
 ]

@@ -2,7 +2,11 @@
 Git status and diff operations.
 """
 
-from typing import Optional, List
+import json
+from typing import Any, Optional
+
+from tools._base import ToolContext, ToolDef
+
 from ._runner import run_git
 
 
@@ -12,28 +16,28 @@ def git_status(
 ) -> dict:
     """
     Get working tree status.
-    
+
     Args:
         short: Use short format (default: True)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'clean', 'files', 'raw'
     """
     args = ['status']
     if short:
         args.append('-s')
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     if not success:
         return {'success': False, 'clean': None, 'files': [], 'raw': stderr}
-    
+
     files = []
     for line in stdout.strip().split('\n'):
         if not line.strip():
             continue
-        
+
         if short:
             # Short format: XY filename
             status = line[:2]
@@ -41,7 +45,7 @@ def git_status(
             files.append({'status': status, 'file': filename})
         else:
             files.append(line)
-    
+
     return {
         'success': True,
         'clean': len(files) == 0,
@@ -57,25 +61,25 @@ def git_diff(
 ) -> dict:
     """
     Show changes in working tree or staging area.
-    
+
     Args:
         file: Specific file to diff (default: all files)
         staged: Show staged changes instead of unstaged
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'diff', 'has_changes'
     """
     args = ['diff']
-    
+
     if staged:
         args.append('--cached')
-    
+
     if file:
         args.extend(['--', file])
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     return {
         'success': success,
         'diff': stdout if success else stderr,
@@ -91,13 +95,13 @@ def git_show(
 ) -> dict:
     """
     Show commit details or file contents at a ref.
-    
+
     Args:
         ref: Commit SHA, branch, or tag (default: HEAD)
         file: Show specific file at that ref
         stat_only: Only show diffstat, not full diff
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'output'
     """
@@ -109,21 +113,49 @@ def git_show(
         args = ['show', ref]
         if stat_only:
             args.append('--stat')
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd)
-    
+
     return {
         'success': success,
         'output': stdout if success else stderr
     }
 
 
+# Async handler wrappers for tool system
+async def _handle_git_status(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_status(
+        short=arguments.get("short", True),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_diff(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_diff(
+        file=arguments.get("file"),
+        staged=arguments.get("staged", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_show(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_show(
+        ref=arguments.get("ref", "HEAD"),
+        file=arguments.get("file"),
+        stat_only=arguments.get("stat_only", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
 # Tool definitions
 TOOLS = [
-    {
-        "name": "git_status",
-        "description": "Get the working tree status - shows modified, staged, and untracked files.",
-        "parameters": {
+    ToolDef(
+        name="git_status",
+        description="Get the working tree status - shows modified, staged, and untracked files.",
+        parameters={
             "type": "object",
             "properties": {
                 "short": {
@@ -137,12 +169,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_status
-    },
-    {
-        "name": "git_diff",
-        "description": "Show changes between working tree and index, or staged changes.",
-        "parameters": {
+        handler=_handle_git_status,
+    ),
+    ToolDef(
+        name="git_diff",
+        description="Show changes between working tree and index, or staged changes.",
+        parameters={
             "type": "object",
             "properties": {
                 "file": {
@@ -160,12 +192,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_diff
-    },
-    {
-        "name": "git_show",
-        "description": "Show commit details or file contents at a specific ref.",
-        "parameters": {
+        handler=_handle_git_diff,
+    ),
+    ToolDef(
+        name="git_show",
+        description="Show commit details or file contents at a specific ref.",
+        parameters={
             "type": "object",
             "properties": {
                 "ref": {
@@ -187,6 +219,6 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_show
-    }
+        handler=_handle_git_show,
+    ),
 ]

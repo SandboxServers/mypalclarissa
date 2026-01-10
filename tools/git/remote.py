@@ -2,7 +2,11 @@
 Git remote operations - push, pull, fetch.
 """
 
-from typing import Optional
+import json
+from typing import Any, Optional
+
+from tools._base import ToolContext, ToolDef
+
 from ._runner import run_git, _inject_token_in_url
 
 
@@ -15,34 +19,34 @@ def git_push(
 ) -> dict:
     """
     Push commits to a remote repository.
-    
+
     Args:
         remote: Remote name (default: origin)
         branch: Branch to push (default: current branch)
         force: Force push (use with caution!)
         set_upstream: Set upstream tracking (-u)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['push']
-    
+
     if set_upstream:
         args.append('-u')
-    
+
     if force:
         args.append('--force')
-    
+
     args.append(remote)
-    
+
     if branch:
         args.append(branch)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd, inject_auth=True)
-    
+
     output = stdout or stderr
-    
+
     return {
         'success': success,
         'message': output.strip() if output else ("Push complete" if success else "Push failed")
@@ -57,30 +61,30 @@ def git_pull(
 ) -> dict:
     """
     Pull changes from a remote repository.
-    
+
     Args:
         remote: Remote name (default: origin)
         branch: Branch to pull (default: current tracking branch)
         rebase: Rebase instead of merge
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['pull']
-    
+
     if rebase:
         args.append('--rebase')
-    
+
     args.append(remote)
-    
+
     if branch:
         args.append(branch)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd, inject_auth=True)
-    
+
     output = stdout or stderr
-    
+
     return {
         'success': success,
         'message': output.strip() if output else ("Pull complete" if success else "Pull failed")
@@ -95,30 +99,30 @@ def git_fetch(
 ) -> dict:
     """
     Fetch refs from remote(s).
-    
+
     Args:
         remote: Remote name (default: origin)
         prune: Remove deleted remote branches
         all_remotes: Fetch from all remotes
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success', 'message'
     """
     args = ['fetch']
-    
+
     if prune:
         args.append('--prune')
-    
+
     if all_remotes:
         args.append('--all')
     else:
         args.append(remote)
-    
+
     success, stdout, stderr = run_git(*args, cwd=cwd, inject_auth=True)
-    
+
     output = stdout or stderr
-    
+
     return {
         'success': success,
         'message': output.strip() if output else ("Fetch complete" if success else "Fetch failed")
@@ -133,22 +137,22 @@ def git_remote(
 ) -> dict:
     """
     Manage remotes.
-    
+
     Args:
         action: 'list', 'add', 'remove', or 'get-url'
         name: Remote name (for add/remove/get-url)
         url: Remote URL (for add)
         cwd: Repository directory
-    
+
     Returns:
         dict with 'success' and action-specific data
     """
     if action == "list":
         success, stdout, stderr = run_git('remote', '-v', cwd=cwd)
-        
+
         if not success:
             return {'success': False, 'remotes': [], 'message': stderr}
-        
+
         remotes = {}
         for line in stdout.strip().split('\n'):
             if not line.strip():
@@ -159,50 +163,92 @@ def git_remote(
                 remote_url = parts[1]
                 if remote_name not in remotes:
                     remotes[remote_name] = remote_url
-        
+
         return {'success': True, 'remotes': remotes}
-    
+
     elif action == "add":
         if not name or not url:
             return {'success': False, 'message': "Name and URL required for 'add'"}
-        
+
         success, stdout, stderr = run_git('remote', 'add', name, url, cwd=cwd)
         return {
             'success': success,
             'message': f"Added remote {name}" if success else stderr
         }
-    
+
     elif action == "remove":
         if not name:
             return {'success': False, 'message': "Name required for 'remove'"}
-        
+
         success, stdout, stderr = run_git('remote', 'remove', name, cwd=cwd)
         return {
             'success': success,
             'message': f"Removed remote {name}" if success else stderr
         }
-    
+
     elif action == "get-url":
         if not name:
             return {'success': False, 'message': "Name required for 'get-url'"}
-        
+
         success, stdout, stderr = run_git('remote', 'get-url', name, cwd=cwd)
         return {
             'success': success,
             'url': stdout.strip() if success else None,
             'message': stderr if not success else None
         }
-    
+
     else:
         return {'success': False, 'message': f"Unknown action: {action}"}
 
 
+# Async handler wrappers for tool system
+async def _handle_git_push(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_push(
+        remote=arguments.get("remote", "origin"),
+        branch=arguments.get("branch"),
+        force=arguments.get("force", False),
+        set_upstream=arguments.get("set_upstream", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_pull(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_pull(
+        remote=arguments.get("remote", "origin"),
+        branch=arguments.get("branch"),
+        rebase=arguments.get("rebase", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_fetch(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_fetch(
+        remote=arguments.get("remote", "origin"),
+        prune=arguments.get("prune", False),
+        all_remotes=arguments.get("all_remotes", False),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
+async def _handle_git_remote(arguments: dict[str, Any], context: ToolContext) -> str:
+    result = git_remote(
+        action=arguments.get("action", "list"),
+        name=arguments.get("name"),
+        url=arguments.get("url"),
+        cwd=arguments.get("cwd"),
+    )
+    return json.dumps(result)
+
+
 # Tool definitions
 TOOLS = [
-    {
-        "name": "git_push",
-        "description": "Push commits to a remote repository. Automatically handles GitHub auth.",
-        "parameters": {
+    ToolDef(
+        name="git_push",
+        description="Push commits to a remote repository. Automatically handles GitHub auth.",
+        parameters={
             "type": "object",
             "properties": {
                 "remote": {
@@ -228,12 +274,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_push
-    },
-    {
-        "name": "git_pull",
-        "description": "Pull changes from a remote repository.",
-        "parameters": {
+        handler=_handle_git_push,
+    ),
+    ToolDef(
+        name="git_pull",
+        description="Pull changes from a remote repository.",
+        parameters={
             "type": "object",
             "properties": {
                 "remote": {
@@ -255,12 +301,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_pull
-    },
-    {
-        "name": "git_fetch",
-        "description": "Fetch refs from remote(s).",
-        "parameters": {
+        handler=_handle_git_pull,
+    ),
+    ToolDef(
+        name="git_fetch",
+        description="Fetch refs from remote(s).",
+        parameters={
             "type": "object",
             "properties": {
                 "remote": {
@@ -282,12 +328,12 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_fetch
-    },
-    {
-        "name": "git_remote",
-        "description": "Manage git remotes - list, add, remove.",
-        "parameters": {
+        handler=_handle_git_fetch,
+    ),
+    ToolDef(
+        name="git_remote",
+        description="Manage git remotes - list, add, remove.",
+        parameters={
             "type": "object",
             "properties": {
                 "action": {
@@ -310,6 +356,6 @@ TOOLS = [
             },
             "required": []
         },
-        "function": git_remote
-    }
+        handler=_handle_git_remote,
+    ),
 ]
