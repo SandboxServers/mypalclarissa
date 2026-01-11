@@ -729,19 +729,27 @@ def _convert_messages_to_claude_format(messages: list[dict]) -> list[dict]:
 def _get_tool_model(tier: ModelTier | None = None) -> str:
     """Get the model to use for tool calling.
 
-    Checks TOOL_MODEL env var first, then falls back to tier-based selection.
+    Priority:
+    1. If an explicit tier is passed, use tier-based selection
+    2. If TOOL_MODEL env var is set (non-empty), use it as the default
+    3. Otherwise, use tier-based selection with the default tier
 
     Args:
-        tier: Optional tier override. If None, uses default tier.
+        tier: Optional tier override. If provided, tier-based selection is used.
     """
-    # Explicit TOOL_MODEL takes priority
-    if tool_model := os.getenv("TOOL_MODEL"):
-        return tool_model
-
-    # Use tier-based model selection
     provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
-    effective_tier = tier or get_current_tier()
-    return get_model_for_tier(effective_tier, provider)
+
+    # If explicit tier is passed, always use tier-based selection
+    if tier is not None:
+        return get_model_for_tier(tier, provider)
+
+    # Check for TOOL_MODEL as default when no tier specified
+    tool_model_env = os.getenv("TOOL_MODEL", "")
+    if tool_model_env:
+        return tool_model_env
+
+    # Fall back to tier-based selection with default tier
+    return get_model_for_tier(get_current_tier(), provider)
 
 
 def make_llm_with_tools(
@@ -757,7 +765,8 @@ def make_llm_with_tools(
     Args:
         tools: List of tool definitions in OpenAI format. If None, no tools.
         tier: Optional model tier ("high", "mid", "low").
-              If None, uses the default tier from MODEL_TIER env var or "mid".
+              If provided, overrides TOOL_MODEL env var.
+              If None, uses TOOL_MODEL env var or default tier.
 
     Returns:
         Function that calls the LLM with tool support.
