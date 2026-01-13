@@ -46,6 +46,8 @@ class ToolDef:
         handler: Async function that executes the tool
         platforms: List of platforms this tool is available on (None = all)
         requires: List of capabilities required (e.g., ["docker", "email", "files"])
+        system_prompt: Optional additional system prompt content when this tool is available
+        priority: Tool priority for ordering (higher = earlier in list, default 0)
     """
 
     name: str
@@ -54,6 +56,8 @@ class ToolDef:
     handler: ToolHandler
     platforms: list[str] | None = None
     requires: list[str] = field(default_factory=list)
+    system_prompt: str | None = None
+    priority: int = 0
 
     def to_openai_format(self) -> dict[str, Any]:
         """Convert to OpenAI tool format for LLM consumption."""

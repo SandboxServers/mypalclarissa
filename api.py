@@ -1,19 +1,29 @@
 """FastAPI backend for MyPalClarissa assistant."""
+
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from dotenv import load_dotenv
 
+from clarissa_core import MemoryManager, init_platform
 from db import SessionLocal
-from db.models import Project, Session, Message
-from clarissa_core import init_platform, MemoryManager
+from db.models import Message, Project, Session
+
+# Rumination mode (v0.8) - import conditionally
+try:
+    from clarissa_core.rumination_loop import is_rumination_enabled
+except ImportError:
+
+    def is_rumination_enabled() -> bool:
+        return False
+
 
 load_dotenv()
 
@@ -27,7 +37,7 @@ app = FastAPI(title="MyPalClarissa API")
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     """Log validation errors before returning 422."""
     body = await request.body()
-    print(f"[api] Validation error!")
+    print("[api] Validation error!")
     print(f"[api] URL: {request.url}")
     print(f"[api] Body: {body}")
     print(f"[api] Errors: {exc.errors()}")
@@ -35,6 +45,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         status_code=422,
         content={"detail": exc.errors()},
     )
+
 
 # CORS for frontend - allow all origins in Docker for LAN access
 # You can restrict this by setting CORS_ORIGINS env var (comma-separated)
@@ -186,7 +197,7 @@ def store_messages(request: StoreRequest):
         # Store messages
         mm.store_message(db, thread.id, USER_ID, "user", request.user_message)
         mm.store_message(db, thread.id, USER_ID, "assistant", request.assistant_message)
-        thread.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        thread.last_activity_at = datetime.now(UTC).replace(tzinfo=None)
 
         # Auto-generate title from first user message if not set
         if not thread.title and request.user_message:
@@ -203,8 +214,11 @@ def store_messages(request: StoreRequest):
 
         # Add to mem0
         mm.add_to_mem0(
-            USER_ID, project_id, recent_msgs,
-            request.user_message, request.assistant_message
+            USER_ID,
+            project_id,
+            recent_msgs,
+            request.user_message,
+            request.assistant_message,
         )
 
         return {"status": "ok", "thread_id": thread.id}
@@ -247,6 +261,12 @@ def chat(request: ChatRequest):
             request.message,
         )
 
+        # Check for rumination mode (v0.8)
+        # When enabled, Clarissa uses faculty-based orchestration
+        # TODO: Full async integration with process_with_rumination()
+        if is_rumination_enabled():
+            print("[api] Rumination mode enabled - faculty architecture active")
+
         # Call LLM
         llm = make_llm()
         response = llm(prompt_messages)
@@ -254,7 +274,7 @@ def chat(request: ChatRequest):
         # Store messages
         mm.store_message(db, thread.id, USER_ID, "user", request.message)
         mm.store_message(db, thread.id, USER_ID, "assistant", response)
-        thread.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        thread.last_activity_at = datetime.now(UTC).replace(tzinfo=None)
 
         # Auto-generate title from first user message if not set
         if not thread.title and request.message:
@@ -270,10 +290,7 @@ def chat(request: ChatRequest):
             mm.update_thread_summary(db, thread)
 
         # Add to mem0
-        mm.add_to_mem0(
-            USER_ID, project_id, recent_msgs,
-            request.message, response
-        )
+        mm.add_to_mem0(USER_ID, project_id, recent_msgs, request.message, response)
 
         print(f"[api] /api/chat response: {len(response)} chars")
         return {
@@ -297,6 +314,7 @@ def get_projects():
 
 # ============== Thread Management API ==============
 
+
 @app.get("/api/threads")
 def list_threads():
     """List all threads for the user."""
@@ -319,12 +337,14 @@ def list_threads():
             else:
                 status = "regular"
 
-            threads.append({
-                "remoteId": sess.id,
-                "status": status,
-                "title": sess.title,
-                "isPinned": sess.archived == "pinned",
-            })
+            threads.append(
+                {
+                    "remoteId": sess.id,
+                    "status": status,
+                    "title": sess.title,
+                    "isPinned": sess.archived == "pinned",
+                }
+            )
 
         # Sort: pinned first, then by activity
         threads.sort(key=lambda t: (not t.get("isPinned", False), 0))
@@ -400,7 +420,7 @@ def append_message(thread_id: str, request: MessageAppendRequest):
             content=request.content,
         )
         db.add(msg)
-        sess.last_activity_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        sess.last_activity_at = datetime.now(UTC).replace(tzinfo=None)
         db.commit()
         print(f"[api] Appended {request.role} message to thread {thread_id}")
         return {"status": "ok", "id": str(msg.id)}
@@ -447,29 +467,24 @@ def generate_thread_title(thread_id: str):
             return {"title": "New Chat"}
 
         # Build context for title generation
-        context = "\n".join([
-            f"{msg.role}: {msg.content[:200]}"
-            for msg in messages
-            if msg.content
-        ])
+        context = "\n".join(
+            [f"{msg.role}: {msg.content[:200]}" for msg in messages if msg.content]
+        )
 
         # Use LLM to generate a short title
         title_prompt = [
             {
                 "role": "system",
-                "content": "Generate a very short title (3-6 words) that summarizes this conversation. Return ONLY the title, nothing else. No quotes, no punctuation at the end."
+                "content": "Generate a very short title (3-6 words) that summarizes this conversation. Return ONLY the title, nothing else. No quotes, no punctuation at the end.",
             },
-            {
-                "role": "user",
-                "content": f"Conversation:\n{context}"
-            }
+            {"role": "user", "content": f"Conversation:\n{context}"},
         ]
 
         try:
             llm = make_llm()
             title = llm(title_prompt).strip()
             # Clean up and truncate
-            title = title.strip('"\'').strip()
+            title = title.strip("\"'").strip()
             if len(title) > 50:
                 title = title[:47] + "..."
         except Exception as e:
@@ -568,7 +583,8 @@ def health():
 def health_checkers():
     """Health check endpoint for proactive checkers."""
     try:
-        from checkers import get_scheduler, get_registry
+        from checkers import get_registry, get_scheduler
+
         scheduler = get_scheduler()
         registry = get_registry()
         return {
@@ -591,13 +607,14 @@ def health_checkers():
 def version():
     """Get platform version information."""
     from clarissa_core import __version__, get_version
+
     return {
         "version": get_version(),
         "platform": "mypalclarissa",
         "components": {
             "api": __version__,
             "clarissa_core": __version__,
-        }
+        },
     }
 
 
@@ -636,7 +653,8 @@ def list_memories(project_id: str = None):
         # Filter by project if specified
         if project_id:
             memories = [
-                m for m in memories
+                m
+                for m in memories
                 if m.get("metadata", {}).get("project_id") == project_id
             ]
 
@@ -744,6 +762,7 @@ def search_memories(request: ContextRequest):
 
 # ============== Contact/People API ==============
 
+
 @app.get("/api/contacts")
 def list_contacts():
     """List all contacts that have memories stored."""
@@ -787,8 +806,7 @@ def get_contact_memories(contact_id: str):
 
         # Filter by contact_id in metadata
         contact_memories = [
-            m for m in memories
-            if m.get("metadata", {}).get("contact_id") == contact_id
+            m for m in memories if m.get("metadata", {}).get("contact_id") == contact_id
         ]
 
         print(f"[api] Found {len(contact_memories)} memories for contact {contact_id}")
@@ -834,21 +852,23 @@ def list_imessage_contacts():
         for contact_id, stats in sorted(
             contacts.items(),
             key=lambda x: x[1]["sent"] + x[1]["received"],
-            reverse=True
+            reverse=True,
         )[:100]:  # Limit to top 100
-            formatted.append({
-                "contact_id": contact_id,
-                "sent": stats["sent"],
-                "received": stats["received"],
-                "total": stats["sent"] + stats["received"],
-                "last_message": stats["last_date"],
-            })
+            formatted.append(
+                {
+                    "contact_id": contact_id,
+                    "sent": stats["sent"],
+                    "received": stats["received"],
+                    "total": stats["sent"] + stats["received"],
+                    "last_message": stats["last_date"],
+                }
+            )
 
         return {"contacts": formatted}
     except FileNotFoundError:
         raise HTTPException(
             status_code=503,
-            detail="iMessage database not accessible. Ensure Full Disk Access is enabled."
+            detail="iMessage database not accessible. Ensure Full Disk Access is enabled.",
         )
     except Exception as e:
         print(f"[api] Error listing iMessage contacts: {e}")
@@ -880,7 +900,7 @@ def import_imessage_contact(request: ContactImportRequest):
     except FileNotFoundError:
         raise HTTPException(
             status_code=503,
-            detail="iMessage database not accessible. Ensure Full Disk Access is enabled."
+            detail="iMessage database not accessible. Ensure Full Disk Access is enabled.",
         )
     except Exception as e:
         print(f"[api] Error importing iMessage contact: {e}")
@@ -929,12 +949,14 @@ async def web_search(request: SearchRequest):
         # Format results for the LLM
         results = []
         for r in data.get("results", []):
-            results.append({
-                "title": r.get("title", ""),
-                "url": r.get("url", ""),
-                "content": r.get("content", ""),
-                "score": r.get("score", 0),
-            })
+            results.append(
+                {
+                    "title": r.get("title", ""),
+                    "url": r.get("url", ""),
+                    "content": r.get("content", ""),
+                    "score": r.get("score", 0),
+                }
+            )
 
         print(f"[api] Web search for '{request.query}': {len(results)} results")
 
@@ -953,4 +975,5 @@ async def web_search(request: SearchRequest):
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)

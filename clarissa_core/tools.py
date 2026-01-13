@@ -9,7 +9,7 @@ Provides a central registry for all tools that Clarissa can use, with support fo
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, ClassVar
 
 
@@ -72,13 +72,13 @@ class ToolRegistry:
         result = await registry.execute("my_tool", {"arg": "value"}, context)
     """
 
-    _instance: ClassVar["ToolRegistry | None"] = None
+    _instance: ClassVar[ToolRegistry | None] = None
 
     def __init__(self):
         self._tools: dict[str, ToolDefinition] = {}
 
     @classmethod
-    def get_instance(cls) -> "ToolRegistry":
+    def get_instance(cls) -> ToolRegistry:
         """Get the singleton registry instance."""
         if cls._instance is None:
             raise RuntimeError(
@@ -87,7 +87,7 @@ class ToolRegistry:
         return cls._instance
 
     @classmethod
-    def initialize(cls) -> "ToolRegistry":
+    def initialize(cls) -> ToolRegistry:
         """Initialize the singleton registry."""
         if cls._instance is None:
             cls._instance = cls()
@@ -297,8 +297,8 @@ def register_docker_tools(registry: ToolRegistry) -> None:
     # Import here to avoid circular imports
     try:
         from sandbox.docker import (
-            get_sandbox_manager,
             DOCKER_TOOLS,
+            get_sandbox_manager,
         )
     except ImportError:
         print("[tools] Docker tools not available (sandbox.docker module not found)")
@@ -333,7 +333,9 @@ def register_docker_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             platforms=["discord"],  # Docker tools only for Discord
             requires_docker=True,
@@ -379,7 +381,9 @@ def register_local_file_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             requires_files=True,
         )
@@ -412,7 +416,9 @@ def register_email_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             platforms=["discord"],  # Email tools only for Discord
             requires_email=True,

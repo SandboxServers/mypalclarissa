@@ -104,19 +104,87 @@ class ClarissaConfig:
     # Paths
     base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
 
+    # Role modes (v0.8)
+    default_role: str = "general"
+    role_config_dir: str = "config/roles"
+
+    # Rumination (v0.8)
+    enable_rumination: bool = False  # Start disabled, enable when ready
+    rumination_max_iterations: int = 5
+
+    # Sandbox (v0.8)
+    sandbox_type: str = "docker"  # "bubblewrap" or "docker"
+    sandbox_work_dir: str = "~/.clarissa/sandbox"
+    sandbox_timeout: int = 30
+    sandbox_network: bool = True  # Allow network in sandbox
+
     # Singleton instance
-    _instance: ClassVar["ClarissaConfig | None"] = None
+    _instance: ClassVar[ClarissaConfig | None] = None
     _initialized: ClassVar[bool] = False
 
     @classmethod
-    def get_instance(cls) -> "ClarissaConfig":
+    def get_instance(cls) -> ClarissaConfig:
         """Get the singleton configuration instance."""
         if cls._instance is None:
             cls._instance = cls._load_from_env()
         return cls._instance
 
     @classmethod
-    def _load_from_env(cls) -> "ClarissaConfig":
+    def is_initialized(cls) -> bool:
+        """Check if the platform has been initialized."""
+        return cls._initialized
+
+    @classmethod
+    def reset(cls) -> None:
+        """Reset the singleton (for testing)."""
+        cls._instance = None
+        cls._initialized = False
+
+    def validate(self) -> list[str]:
+        """Validate configuration and return list of errors.
+
+        Returns:
+            List of error messages (empty if valid)
+        """
+        errors = []
+
+        # Required: OpenAI API key for embeddings
+        if not self.openai_api_key:
+            errors.append("OPENAI_API_KEY is required for mem0 embeddings")
+
+        # Validate LLM provider has required credentials
+        provider = self.llm_provider
+        if provider == "openrouter" and not self.openrouter_api_key:
+            errors.append("OPENROUTER_API_KEY required when LLM_PROVIDER=openrouter")
+        elif provider == "nanogpt" and not self.nanogpt_api_key:
+            errors.append("NANOGPT_API_KEY required when LLM_PROVIDER=nanogpt")
+        elif provider == "openai" and not self.custom_openai_api_key:
+            errors.append("CUSTOM_OPENAI_API_KEY required when LLM_PROVIDER=openai")
+        elif provider == "anthropic" and not self.anthropic_api_key:
+            errors.append("ANTHROPIC_API_KEY required when LLM_PROVIDER=anthropic")
+
+        # Validate graph memory config
+        if self.enable_graph_memory:
+            if self.graph_store_provider == "neo4j" and not self.neo4j_url:
+                errors.append(
+                    "NEO4J_URL required when ENABLE_GRAPH_MEMORY=true "
+                    "and GRAPH_STORE_PROVIDER=neo4j"
+                )
+
+        return errors
+
+    def validate_or_raise(self) -> None:
+        """Validate configuration and raise if invalid.
+
+        Raises:
+            ValueError: If configuration is invalid
+        """
+        errors = self.validate()
+        if errors:
+            raise ValueError(f"Configuration errors: {'; '.join(errors)}")
+
+    @classmethod
+    def _load_from_env(cls) -> ClarissaConfig:
         """Load configuration from environment variables."""
         load_dotenv()
 
@@ -185,9 +253,7 @@ class ClarissaConfig:
             discord_monitor_enabled=os.getenv("DISCORD_MONITOR_ENABLED", "true").lower()
             == "true",
             # Docker sandbox
-            docker_sandbox_image=os.getenv(
-                "DOCKER_SANDBOX_IMAGE", "python:3.12-slim"
-            ),
+            docker_sandbox_image=os.getenv("DOCKER_SANDBOX_IMAGE", "python:3.12-slim"),
             docker_sandbox_timeout=int(os.getenv("DOCKER_SANDBOX_TIMEOUT", "900")),
             docker_sandbox_memory=os.getenv("DOCKER_SANDBOX_MEMORY", "512m"),
             docker_sandbox_cpu=float(os.getenv("DOCKER_SANDBOX_CPU", "1.0")),
@@ -204,6 +270,17 @@ class ClarissaConfig:
             clara_email_notify_user=os.getenv("CLARISSA_EMAIL_NOTIFY_USER", ""),
             clara_email_notify=os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower()
             == "true",
+            # Role modes (v0.8)
+            default_role=os.getenv("DEFAULT_ROLE", "general"),
+            role_config_dir=os.getenv("ROLE_CONFIG_DIR", "config/roles"),
+            # Rumination (v0.8)
+            enable_rumination=os.getenv("ENABLE_RUMINATION", "false").lower() == "true",
+            rumination_max_iterations=int(os.getenv("RUMINATION_MAX_ITERATIONS", "5")),
+            # Sandbox (v0.8)
+            sandbox_type=os.getenv("SANDBOX_TYPE", "docker").lower(),
+            sandbox_work_dir=os.getenv("SANDBOX_WORK_DIR", "~/.clarissa/sandbox"),
+            sandbox_timeout=int(os.getenv("SANDBOX_TIMEOUT", "30")),
+            sandbox_network=os.getenv("SANDBOX_NETWORK", "true").lower() == "true",
         )
 
 
@@ -212,29 +289,40 @@ def get_config() -> ClarissaConfig:
     return ClarissaConfig.get_instance()
 
 
-def init_platform() -> None:
+def init_platform(validate: bool = True) -> None:
     """Initialize the Clarissa platform.
 
     Call this once at application startup to:
-    1. Load configuration
+    1. Load and validate configuration
     2. Initialize database
     3. Initialize MemoryManager singleton
     4. Initialize ToolRegistry singleton
     5. Optionally load initial profile
+
+    Args:
+        validate: If True, validate config and warn about missing credentials
     """
-    from clarissa_core.memory import MemoryManager, load_initial_profile
     from clarissa_core.llm import make_llm
+    from clarissa_core.memory import MemoryManager, load_initial_profile
     from clarissa_core.tools import ToolRegistry
     from db.connection import init_db
 
     config = get_config()
 
-    # Mark as initialized
+    # Check if already initialized
     if ClarissaConfig._initialized:
         print("[clarissa_core] Platform already initialized, skipping")
         return
 
     print("[clarissa_core] Initializing platform...")
+
+    # 0. Validate configuration (optional, warns but doesn't fail)
+    if validate:
+        errors = config.validate()
+        if errors:
+            print("[clarissa_core] Configuration warnings:")
+            for error in errors:
+                print(f"  - {error}")
 
     # 1. Initialize database
     init_db()
@@ -249,6 +337,12 @@ def init_platform() -> None:
     # 4. Load initial profile if enabled
     if not config.skip_profile_load:
         load_initial_profile(config.user_id)
+
+    # 5. Initialize faculties if rumination is enabled (v0.8)
+    if config.enable_rumination:
+        from clarissa_core.faculties import initialize_faculties
+
+        initialize_faculties()
 
     ClarissaConfig._initialized = True
     print("[clarissa_core] Platform initialized successfully")

@@ -75,9 +75,22 @@ class GroupSession:
 
     # Pronouns that may need resolution
     PRONOUNS = {
-        "he", "him", "his", "she", "her", "hers",
-        "they", "them", "their", "theirs",
-        "it", "its", "this", "that", "these", "those",
+        "he",
+        "him",
+        "his",
+        "she",
+        "her",
+        "hers",
+        "they",
+        "them",
+        "their",
+        "theirs",
+        "it",
+        "its",
+        "this",
+        "that",
+        "these",
+        "those",
     }
 
     def __init__(
@@ -157,7 +170,9 @@ class GroupSession:
         if author_id not in self._participants:
             if len(self._participants) >= self.max_participants:
                 # Remove least recently active
-                oldest = min(self._participants.values(), key=lambda p: p.last_message_at)
+                oldest = min(
+                    self._participants.values(), key=lambda p: p.last_message_at
+                )
                 del self._participants[oldest.user_id]
 
             self._participants[author_id] = Participant(
@@ -278,11 +293,13 @@ class GroupSession:
 
     def set_topic(self, topic: str, confidence: float, mentioned_by: str) -> None:
         """Set/update the current conversation topic."""
-        self._topics.append(ConversationTopic(
-            topic=topic,
-            confidence=confidence,
-            mentioned_by=[mentioned_by],
-        ))
+        self._topics.append(
+            ConversationTopic(
+                topic=topic,
+                confidence=confidence,
+                mentioned_by=[mentioned_by],
+            )
+        )
 
         # Keep only last 5 topics
         if len(self._topics) > 5:
@@ -302,7 +319,8 @@ class GroupSession:
             ],
             "current_topic": self.current_topic.topic if self.current_topic else None,
             "message_count": len(self._messages),
-            "session_duration_minutes": (datetime.utcnow() - self.created_at).seconds // 60,
+            "session_duration_minutes": (datetime.utcnow() - self.created_at).seconds
+            // 60,
         }
 
     def get_recent_context(self, limit: int = 10) -> list[dict[str, str]]:
@@ -381,7 +399,8 @@ def cleanup_stale_sessions() -> int:
     """
     now = datetime.utcnow()
     stale_keys = [
-        key for key, session in _sessions.items()
+        key
+        for key, session in _sessions.items()
         if now - session.last_activity > _session_timeout
     ]
 

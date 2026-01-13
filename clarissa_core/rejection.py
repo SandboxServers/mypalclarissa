@@ -29,14 +29,14 @@ class RejectionCode(Enum):
 
     # Soft rejections (might still respond in some contexts)
     LOW_RELEVANCE = "low_relevance"  # Not clearly directed at bot
-    AMBIENT_CHAT = "ambient_chat"    # General conversation, not a question
+    AMBIENT_CHAT = "ambient_chat"  # General conversation, not a question
 
     # Hard rejections (should not respond)
-    TOO_SHORT = "too_short"          # Message too brief to be meaningful
+    TOO_SHORT = "too_short"  # Message too brief to be meaningful
     NOT_A_QUESTION = "not_a_question"  # Statement, not seeking response
-    UNRELATED = "unrelated"          # Outside bot's domain
-    RATE_LIMITED = "rate_limited"    # Too many responses recently
-    QUIET_HOURS = "quiet_hours"      # During configured quiet period
+    UNRELATED = "unrelated"  # Outside bot's domain
+    RATE_LIMITED = "rate_limited"  # Too many responses recently
+    QUIET_HOURS = "quiet_hours"  # During configured quiet period
     ANOTHER_USER_RESPONDING = "another_user_responding"  # Someone else is handling it
 
 
@@ -103,9 +103,15 @@ class RejectionClassifier:
                      Lower = more responsive, Higher = more selective
         """
         self._throttle = throttle
-        self._compiled_direct = [re.compile(p, re.IGNORECASE) for p in self.DIRECT_PATTERNS]
-        self._compiled_question = [re.compile(p, re.IGNORECASE) for p in self.QUESTION_PATTERNS]
-        self._compiled_statement = [re.compile(p, re.IGNORECASE) for p in self.STATEMENT_PATTERNS]
+        self._compiled_direct = [
+            re.compile(p, re.IGNORECASE) for p in self.DIRECT_PATTERNS
+        ]
+        self._compiled_question = [
+            re.compile(p, re.IGNORECASE) for p in self.QUESTION_PATTERNS
+        ]
+        self._compiled_statement = [
+            re.compile(p, re.IGNORECASE) for p in self.STATEMENT_PATTERNS
+        ]
 
     @property
     def throttle(self) -> float:
@@ -186,10 +192,10 @@ class RejectionClassifier:
         # Direct address and questions boost response likelihood
         # Statements reduce it
         aggregate = (
-            scores["direct_address"] * 0.4 +
-            scores["is_question"] * 0.3 +
-            scores["relevance"] * 0.2 +
-            (1.0 - scores["is_statement"]) * 0.1
+            scores["direct_address"] * 0.4
+            + scores["is_question"] * 0.3
+            + scores["relevance"] * 0.2
+            + (1.0 - scores["is_statement"]) * 0.1
         )
 
         # Apply throttle

@@ -83,6 +83,9 @@ services:
       # User config
       - USER_ID=${USER_ID:-demo-user}
       - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
+      # Role modes (v0.8)
+      - DEFAULT_ROLE=${DEFAULT_ROLE:-general}
+      - ROLE_CONFIG_DIR=${ROLE_CONFIG_DIR:-config/roles}
     volumes:
       - mypalclarissa-data:/data
       - ./inputs/user_profile.txt:/app/inputs/user_profile.txt:ro
@@ -214,6 +217,9 @@ services:
       # User config
       - USER_ID=${USER_ID:-demo-user}
       - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
+      # Role modes (v0.8)
+      - DEFAULT_ROLE=${DEFAULT_ROLE:-general}
+      - ROLE_CONFIG_DIR=${ROLE_CONFIG_DIR:-config/roles}
       # Monitor
       - DISCORD_MONITOR_PORT=8001
       - DISCORD_MONITOR_ENABLED=${DISCORD_MONITOR_ENABLED:-true}
@@ -267,6 +273,14 @@ services:
       - ADO_CHECKER_INTERVAL=${ADO_CHECKER_INTERVAL:-15}
       - EMAIL_CHECKER_ENABLED=${EMAIL_CHECKER_ENABLED:-true}
       - EMAIL_CHECKER_INTERVAL=${EMAIL_CHECKER_INTERVAL:-5}
+      # Rumination (v0.8)
+      - ENABLE_RUMINATION=${ENABLE_RUMINATION:-false}
+      - RUMINATION_MAX_ITERATIONS=${RUMINATION_MAX_ITERATIONS:-5}
+      # Sandbox (v0.8)
+      - SANDBOX_TYPE=${SANDBOX_TYPE:-docker}
+      - SANDBOX_WORK_DIR=${SANDBOX_WORK_DIR:-~/.clarissa/sandbox}
+      - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-30}
+      - SANDBOX_NETWORK=${SANDBOX_NETWORK:-true}
       # General
       - SKIP_PROFILE_LOAD=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}

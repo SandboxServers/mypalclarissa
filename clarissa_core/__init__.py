@@ -28,20 +28,14 @@ def get_version() -> str:
     """Get the current Clarissa platform version."""
     return __version__
 
+
 from clarissa_core.config import get_config, init_platform
-from clarissa_core.llm import (
-    ModelTier,
-    make_llm,
-    make_llm_streaming,
-    make_llm_with_tools,
-    get_model_for_tier,
-    get_current_tier,
-    get_tier_info,
-    DEFAULT_TIER,
+from clarissa_core.group_session import (
+    GroupSession,
+    Participant,
+    cleanup_stale_sessions,
+    get_group_session,
 )
-from clarissa_core.memory import MemoryManager, load_initial_profile
-from clarissa_core.platform import PlatformAdapter, PlatformContext, PlatformMessage
-from clarissa_core.tools import ToolRegistry
 
 # KIRA-inspired pipeline components
 from clarissa_core.intent import (
@@ -50,20 +44,25 @@ from clarissa_core.intent import (
     detect_intent,
     get_intent_detector,
 )
-from clarissa_core.tier_selector import (
-    TierSelector,
-    get_tier_selector,
-    select_tier,
-    get_tier_display,
-    TIER_DISPLAY,
+from clarissa_core.llm import (
+    DEFAULT_TIER,
+    ModelTier,
+    get_current_tier,
+    get_model_for_tier,
+    get_tier_info,
+    make_llm,
+    make_llm_streaming,
+    make_llm_with_tools,
 )
+from clarissa_core.memory import MemoryManager, load_initial_profile
 from clarissa_core.pipeline import (
     MessagePipeline,
     PipelineContext,
     PipelineResult,
-    get_pipeline,
     configure_pipeline,
+    get_pipeline,
 )
+from clarissa_core.platform import PlatformAdapter, PlatformContext, PlatformMessage
 
 # Multi-user / group chat components
 from clarissa_core.rejection import (
@@ -73,12 +72,21 @@ from clarissa_core.rejection import (
     get_rejection_classifier,
     should_respond,
 )
-from clarissa_core.group_session import (
-    GroupSession,
-    Participant,
-    get_group_session,
-    cleanup_stale_sessions,
+
+# Role system (v0.8)
+from clarissa_core.roles import (
+    RoleDefinition,
+    RoleManager,
+    get_role_manager,
 )
+from clarissa_core.tier_selector import (
+    TIER_DISPLAY,
+    TierSelector,
+    get_tier_display,
+    get_tier_selector,
+    select_tier,
+)
+from clarissa_core.tools import ToolRegistry
 
 __all__ = [
     # Version
@@ -131,4 +139,8 @@ __all__ = [
     "Participant",
     "get_group_session",
     "cleanup_stale_sessions",
+    # Role system (v0.8)
+    "RoleDefinition",
+    "RoleManager",
+    "get_role_manager",
 ]

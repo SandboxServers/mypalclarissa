@@ -4,7 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MyPalClarissa is a personal AI assistant with session management and persistent memory (via mem0). The assistant's name is Clarissa. It uses a FastAPI backend with SQLite/PostgreSQL storage and a Next.js frontend built with assistant-ui.
+MyPalClarissa is a **business/team-focused AI assistant** (v0.8) with session management and persistent memory (via mem0). The assistant's name is Clarissa. It uses a FastAPI backend with SQLite/PostgreSQL storage and a Next.js frontend built with assistant-ui.
+
+**Key Features (v0.8):**
+- **Faculty/Rumination Architecture**: Intent-based orchestration for multi-step tasks (Clara pattern)
+- **Role Modes**: Switch between Project Manager, Code Reviewer, Meeting Facilitator, Technical Writer modes
+- **Decision Logging**: Track architectural decisions, blockers, team context, and meeting notes
+- **Multi-tier LLM**: Automatic model selection based on task complexity (KIRA-inspired)
+- **Proactive Monitoring**: Background checkers for GitHub, Azure DevOps, and email
+- **Bubblewrap Sandbox**: Lightweight Linux sandboxing for code execution (optional)
 
 ## Development Commands
 
@@ -56,6 +64,12 @@ poetry run python clear_dbs.py --user <id> # Clear specific user
 - `discord_monitor.py` - Web dashboard for monitoring Discord bot status and activity
 - `memory_manager.py` - Core orchestrator: session handling, mem0 integration, prompt building with Clarissa's persona
 - `clarissa_core/llm.py` - LLM provider abstraction (OpenRouter, NanoGPT, custom OpenAI, Anthropic) - both streaming and non-streaming
+- `clarissa_core/faculty.py` - Base Faculty class and FacultyResult model (v0.8)
+- `clarissa_core/rumination.py` - RuminationResult and RuminationContext models (v0.8)
+- `clarissa_core/rumination_loop.py` - Main rumination loop entry point (v0.8)
+- `clarissa_core/faculties/` - Faculty implementations (github, ado, code, planning, decisions)
+- `clarissa_core/nodes/` - Ruminate and Command nodes for decision-making (v0.8)
+- `clarissa_core/sandbox/` - Bubblewrap sandbox for code execution (v0.8)
 - `mem0_config.py` - mem0 memory system configuration (Qdrant/pgvector for vectors, OpenAI embeddings)
 - `models.py` - SQLAlchemy models: Project, Session, Message, ChannelSummary
 - `db.py` - Database setup (SQLite for dev, PostgreSQL for production)
@@ -146,6 +160,16 @@ Example usage in Discord: `!high What is quantum entanglement?`
 - `ENABLE_GRAPH_MEMORY` - Enable graph memory for relationship tracking (default: false)
 - `GRAPH_STORE_PROVIDER` - Graph store provider: "neo4j" (default) or "kuzu" (embedded)
 - `NEO4J_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` - Neo4j connection (when using neo4j provider)
+
+### Rumination Mode (v0.8)
+- `ENABLE_RUMINATION` - Enable faculty/rumination architecture (default: false)
+- `RUMINATION_MAX_ITERATIONS` - Max rumination loops before safety stop (default: 5)
+
+### Sandbox Configuration (v0.8)
+- `SANDBOX_TYPE` - Sandbox type: "docker" (default) or "bubblewrap"
+- `SANDBOX_WORK_DIR` - Bubblewrap workspace directory (default: ~/.clarissa/sandbox)
+- `SANDBOX_TIMEOUT` - Execution timeout in seconds (default: 30)
+- `SANDBOX_NETWORK` - Allow network access in sandbox (default: true)
 
 ### PostgreSQL (Production)
 For production, use managed PostgreSQL instead of SQLite/Qdrant:
@@ -330,6 +354,138 @@ Messages flow through a multi-stage pipeline (in `clarissa_core/`):
 2. **Tier Selection** (`tier_selector.py`) - Choose optimal model tier
 3. **Execution** - Generate response with selected tier
 4. **Memory Extraction** - Store important facts (async)
+
+### Faculty/Rumination Architecture (v0.8)
+Optional intent-based orchestration layer for complex multi-step tasks. Inspired by Clara's design.
+
+**Enable with:** `ENABLE_RUMINATION=true` (disabled by default)
+
+**How it works:**
+1. **Ruminate**: LLM decides how to respond (speak, command, or wait)
+2. **Command**: If action needed, executes via a faculty (capability wrapper)
+3. **Loop**: Faculty result feeds back to rumination for next decision
+
+**Available Faculties:**
+| Faculty | Description | Wraps |
+|---------|-------------|-------|
+| `github` | GitHub operations (repos, issues, PRs, workflows) | `tools/github.py` |
+| `ado` | Azure DevOps operations (work items, repos, PRs) | `tools/azure_devops.py` |
+| `code` | Code execution in sandbox | `tools/docker_sandbox.py` |
+| `planning` | Task planning and progress tracking | `tools/planning/` |
+| `decisions` | Decision logging, blockers, team context | `tools/decision_log.py` |
+
+**Configuration:**
+```bash
+ENABLE_RUMINATION=true           # Enable rumination mode
+RUMINATION_MAX_ITERATIONS=5      # Max loops before safety stop
+```
+
+**Architecture:**
+```
+User Message → Ruminate → Decision
+                            ├── SPEAK: Return response directly
+                            ├── COMMAND: Execute faculty → Loop back
+                            └── WAIT: No response needed
+```
+
+### Bubblewrap Sandbox (v0.8)
+Lightweight Linux sandboxing alternative to Docker for code execution.
+
+**Enable with:** `SANDBOX_TYPE=bubblewrap` (default: docker)
+
+**Benefits:**
+- Faster startup than Docker containers
+- Lower resource overhead
+- Persistent workspace between executions
+
+**Installation (Linux only):**
+```bash
+# Ubuntu/Debian
+sudo apt install bubblewrap
+
+# Fedora/RHEL
+sudo dnf install bubblewrap
+
+# Arch
+sudo pacman -S bubblewrap
+```
+
+**Configuration:**
+```bash
+SANDBOX_TYPE=bubblewrap          # Use bubblewrap instead of docker
+SANDBOX_WORK_DIR=~/.clarissa/sandbox  # Persistent workspace
+SANDBOX_TIMEOUT=30               # Execution timeout (seconds)
+SANDBOX_NETWORK=true             # Allow network access (for pip)
+```
+
+**Note:** Bubblewrap is Linux-only. On macOS/Windows, use `SANDBOX_TYPE=docker`.
+
+## v0.8 Features (Business/Team Focus)
+
+### Role Modes
+Clarissa supports different operational modes optimized for specific business contexts:
+
+**Available Roles:**
+| Role | Focus | Key Behaviors |
+|------|-------|---------------|
+| `general` | Balanced assistant (default) | Professional, efficient, uses tools as needed |
+| `project_manager` | Status tracking, deadlines | Action-oriented, tracks blockers, coordinates tasks |
+| `code_reviewer` | Code quality, best practices | Technical analysis, security awareness, specific feedback |
+| `meeting_facilitator` | Agenda, action items | Time management, captures decisions, ensures alignment |
+| `technical_writer` | Documentation, clarity | Structured output, audience-aware, comprehensive |
+
+**Configuration:**
+- `DEFAULT_ROLE` - Default role for all users (default: "general")
+- `ROLE_CONFIG_DIR` - Directory for custom role JSON files (default: "config/roles")
+
+**Usage (Discord):**
+```
+/role project_manager    # Switch to Project Manager mode
+/role general            # Return to default mode
+```
+
+Roles affect:
+- System prompt modifications (tone, priorities)
+- Tool preferences (which tools to use proactively)
+- Memory focus (what types of facts to remember)
+
+### Decision Logging Tools
+Business-focused memory management for tracking project decisions, blockers, and team context.
+
+**Decision Logging Tools:**
+- `log_decision` - Record technical/project decisions with rationale
+  - Categories: architecture, technology, process, api, database, security, performance, ux
+- `log_blocker` - Track issues blocking progress (open/in_progress/resolved)
+- `log_team_context` - Store team member roles and expertise
+- `log_meeting_note` - Capture meeting summaries and action items
+- `query_decisions` - Search past decisions, blockers, team context
+
+**Example Usage:**
+```
+"Let's log a decision: We'll use PostgreSQL for the main database because
+of its pgvector support for embeddings."
+
+"Log a blocker: We can't deploy until the SSL certificate is renewed."
+
+"Remember that Sarah is our DevOps lead and specializes in Kubernetes."
+```
+
+Memories are stored in mem0 with metadata tags for filtering by type (decision, blocker, team_context, meeting_note) and category.
+
+### Business Intent Detection
+The intent detector recognizes business-specific patterns:
+
+**Tool Keywords (trigger tool usage):**
+- Decision logging: "log decision", "record decision", "query decisions"
+- Blockers: "log blocker", "track blocker"
+- Meetings: "meeting notes", "action items"
+- Team: "team member"
+
+**Complex Keywords (trigger HIGH tier):**
+- Project context: "project status", "sprint review", "retrospective"
+- Architecture: "technical decision", "architecture decision", "ADR"
+- Planning: "blockers", "dependencies", "stakeholder", "requirements"
+- Estimation: "prioritize", "estimate", "timeline"
 
 ## Production Deployment
 

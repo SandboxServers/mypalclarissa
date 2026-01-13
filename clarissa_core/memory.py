@@ -13,7 +13,7 @@ import os
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as OrmSession
@@ -139,7 +139,7 @@ class MemoryManager:
     This is a singleton - use MemoryManager.get_instance() after initialization.
     """
 
-    _instance: ClassVar["MemoryManager | None"] = None
+    _instance: ClassVar[MemoryManager | None] = None
 
     def __init__(self, llm_callable: Callable[[list[dict]], str]):
         """Initialize MemoryManager.
@@ -150,7 +150,7 @@ class MemoryManager:
         self.llm = llm_callable
 
     @classmethod
-    def get_instance(cls) -> "MemoryManager":
+    def get_instance(cls) -> MemoryManager:
         """Get the singleton MemoryManager instance.
 
         Raises:
@@ -163,7 +163,7 @@ class MemoryManager:
         return cls._instance
 
     @classmethod
-    def initialize(cls, llm_callable: Callable[[list[dict]], str]) -> "MemoryManager":
+    def initialize(cls, llm_callable: Callable[[list[dict]], str]) -> MemoryManager:
         """Initialize the singleton MemoryManager.
 
         Args:
@@ -176,6 +176,11 @@ class MemoryManager:
             cls._instance = cls(llm_callable=llm_callable)
             print("[memory] MemoryManager initialized")
         return cls._instance
+
+    @classmethod
+    def is_initialized(cls) -> bool:
+        """Check if MemoryManager has been initialized."""
+        return cls._instance is not None
 
     @classmethod
     def reset(cls) -> None:
@@ -218,13 +223,13 @@ class MemoryManager:
 
     # ---------- Thread/Message helpers ----------
 
-    def get_thread(self, db: "OrmSession", thread_id: str) -> "Session | None":
+    def get_thread(self, db: OrmSession, thread_id: str) -> Session | None:
         """Get a thread by ID."""
         from db.models import Session
 
         return db.query(Session).filter_by(id=thread_id).first()
 
-    def get_recent_messages(self, db: "OrmSession", thread_id: str) -> list["Message"]:
+    def get_recent_messages(self, db: OrmSession, thread_id: str) -> list[Message]:
         """Get recent messages from a thread."""
         from db.models import Message
 
@@ -237,7 +242,7 @@ class MemoryManager:
         )
         return list(reversed(msgs))
 
-    def get_message_count(self, db: "OrmSession", thread_id: str) -> int:
+    def get_message_count(self, db: OrmSession, thread_id: str) -> int:
         """Get total message count for a thread."""
         from db.models import Message
 
@@ -245,12 +250,12 @@ class MemoryManager:
 
     def store_message(
         self,
-        db: "OrmSession",
+        db: OrmSession,
         thread_id: str,
         user_id: str,
         role: str,
         content: str,
-    ) -> "Message":
+    ) -> Message:
         """Store a message in a thread."""
         from db.models import Message
 
@@ -267,12 +272,12 @@ class MemoryManager:
 
     # ---------- Summary management ----------
 
-    def should_update_summary(self, db: "OrmSession", thread_id: str) -> bool:
+    def should_update_summary(self, db: OrmSession, thread_id: str) -> bool:
         """Check if thread summary should be updated."""
         msg_count = self.get_message_count(db, thread_id)
         return msg_count > 0 and msg_count % SUMMARY_INTERVAL == 0
 
-    def update_thread_summary(self, db: "OrmSession", thread: "Session") -> str:
+    def update_thread_summary(self, db: OrmSession, thread: Session) -> str:
         """Generate/update summary for a thread."""
         from db.models import Message
 
@@ -372,9 +377,7 @@ class MemoryManager:
         for r in user_res.get("results", []):
             metadata = r.get("metadata", {})
             if metadata.get("contact_id"):
-                contact_name = metadata.get(
-                    "contact_name", metadata.get("contact_id")
-                )
+                contact_name = metadata.get("contact_name", metadata.get("contact_id"))
                 mem_text = f"[About {contact_name}]: {r['memory']}"
                 if mem_text not in user_mems:
                     user_mems.append(mem_text)
@@ -396,7 +399,7 @@ class MemoryManager:
         self,
         user_id: str,
         project_id: str,
-        recent_msgs: list["Message"],
+        recent_msgs: list[Message],
         user_message: str,
         assistant_reply: str,
         participants: list[dict] | None = None,
@@ -453,8 +456,10 @@ class MemoryManager:
         user_mems: list[str],
         proj_mems: list[str],
         thread_summary: str | None,
-        recent_msgs: list["Message"],
+        recent_msgs: list[Message],
         user_message: str,
+        user_id: str | None = None,
+        channel_id: str | None = None,
     ) -> list[dict[str, str]]:
         """Build the full prompt for the LLM.
 
@@ -464,6 +469,8 @@ class MemoryManager:
             thread_summary: Optional thread summary
             recent_msgs: Recent messages in the conversation
             user_message: Current user message
+            user_id: Optional user ID for role-aware prompts
+            channel_id: Optional channel ID for role fallback
 
         Returns:
             List of messages ready for LLM
@@ -472,8 +479,23 @@ class MemoryManager:
 
         system_base = PERSONALITY
 
+        # Get role-specific prompt modifier (v0.8)
+        role_modifier = ""
+        if user_id:
+            try:
+                from clarissa_core.roles import get_role_manager
+
+                role_manager = get_role_manager()
+                role_modifier = role_manager.get_role_prompt(user_id, channel_id)
+            except Exception:
+                pass  # Role system not available, continue without
+
         # Build context sections
         context_parts = []
+
+        # Add role modifier at the start of context
+        if role_modifier:
+            context_parts.append(f"ACTIVE ROLE:\n{role_modifier}")
 
         if user_mems:
             user_block = "\n".join(f"- {m}" for m in user_mems)

@@ -12,7 +12,6 @@ Manual tier prefixes (!high, !mid, !low) always override automatic selection.
 from __future__ import annotations
 
 import os
-import re
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
@@ -250,7 +249,9 @@ class TierSelector:
                 if kw in message:
                     reasons.append(f"keyword '{kw}'")
                     break
-            return f"High tier selected: {', '.join(reasons) or 'complexity indicators'}"
+            return (
+                f"High tier selected: {', '.join(reasons) or 'complexity indicators'}"
+            )
 
         if tier == "low":
             if intent and intent.complexity == "simple":
