@@ -199,3 +199,154 @@ class ParticipantStats(Base):
 
     # Preferences (learned from interactions)
     preferred_response_style = Column(String, nullable=True)  # brief, detailed, casual, formal
+
+
+# =============================================================================
+# Email Monitoring Models (ported from Clara)
+# =============================================================================
+
+
+class GoogleOAuthToken(Base):
+    """OAuth 2.0 tokens for Google Workspace integration (per-user)."""
+
+    __tablename__ = "google_oauth_tokens"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, unique=True, index=True)
+    access_token = Column(Text, nullable=False)
+    refresh_token = Column(Text, nullable=True)
+    token_type = Column(String, default="Bearer")
+    expires_at = Column(DateTime, nullable=True)
+    scopes = Column(Text, nullable=True)  # JSON array of granted scopes
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class EmailAccount(Base):
+    """User email account connections for monitoring."""
+
+    __tablename__ = "email_accounts"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    email_address = Column(String, nullable=False)
+    provider_type = Column(String, nullable=False)  # "gmail", "imap"
+
+    # Gmail uses existing GoogleOAuthToken via user_id
+    # No separate tokens stored here - gmail provider checks GoogleOAuthToken
+
+    # IMAP credentials (encrypted with Fernet)
+    imap_server = Column(String, nullable=True)
+    imap_port = Column(Integer, nullable=True)
+    imap_username = Column(String, nullable=True)
+    imap_password = Column(Text, nullable=True)  # Encrypted
+
+    # Polling configuration
+    enabled = Column(String, default="true")  # "true" or "false"
+    poll_interval_minutes = Column(Integer, default=5)
+    last_checked_at = Column(DateTime, nullable=True)
+    last_seen_uid = Column(String, nullable=True)  # For incremental fetching
+    last_seen_timestamp = Column(DateTime, nullable=True)
+
+    # Status tracking
+    status = Column(String, default="active")  # active, error, disabled
+    last_error = Column(Text, nullable=True)
+    error_count = Column(Integer, default=0)
+
+    # Discord notification settings
+    alert_channel_id = Column(String, nullable=True)
+    ping_on_alert = Column(String, default="false")  # "true" = @mention
+    quiet_hours_start = Column(Integer, nullable=True)  # Hour (0-23)
+    quiet_hours_end = Column(Integer, nullable=True)
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class EmailRule(Base):
+    """Per-user importance rules for email filtering."""
+
+    __tablename__ = "email_rules"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    account_id = Column(String, ForeignKey("email_accounts.id"), nullable=True)  # null = all accounts
+
+    name = Column(String, nullable=False)
+    enabled = Column(String, default="true")  # "true" or "false"
+    priority = Column(Integer, default=0)  # Higher = checked first
+
+    # Rule definition JSON:
+    # {
+    #   "conditions": {
+    #     "sender_contains": ["recruiter", "hr@"],
+    #     "sender_domain": ["linkedin.com", "greenhouse.io"],
+    #     "subject_contains": ["interview", "offer"],
+    #     "subject_regex": "(?i)interview.*schedule",
+    #     "body_contains": ["please respond"],
+    #     "has_attachments": true
+    #   },
+    #   "match_mode": "any" | "all"
+    # }
+    rule_definition = Column(Text, nullable=False)
+
+    # Action configuration
+    importance = Column(String, default="normal")  # low, normal, high, urgent
+    custom_alert_message = Column(Text, nullable=True)  # Template for alert
+    override_ping = Column(String, nullable=True)  # "true"/"false" or null (inherit)
+
+    # Preset tracking
+    preset_name = Column(String, nullable=True)  # "job_hunting", "urgent", etc.
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class EmailAlert(Base):
+    """History of email alerts sent to Discord (for dedup and tracking)."""
+
+    __tablename__ = "email_alerts"
+
+    id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=False, index=True)
+    account_id = Column(String, ForeignKey("email_accounts.id"), nullable=False)
+    rule_id = Column(String, ForeignKey("email_rules.id"), nullable=True)
+
+    # Email info (denormalized for history)
+    email_uid = Column(String, nullable=False, index=True)  # For dedup
+    email_from = Column(String, nullable=False)
+    email_subject = Column(String, nullable=False)
+    email_snippet = Column(Text, nullable=True)  # First ~200 chars
+    email_received_at = Column(DateTime, nullable=True)
+
+    # Alert info
+    channel_id = Column(String, nullable=False)
+    message_id = Column(String, nullable=True)  # Discord message ID
+    importance = Column(String, nullable=False)
+    was_pinged = Column(String, default="false")
+
+    sent_at = Column(DateTime, default=utcnow)
+
+
+# =============================================================================
+# Guild Configuration Models
+# =============================================================================
+
+
+class GuildConfig(Base):
+    """Per-guild (Discord server) configuration for Clarissa settings."""
+
+    __tablename__ = "guild_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    guild_id = Column(String, unique=True, nullable=False, index=True)
+
+    # Model settings
+    default_tier = Column(String, nullable=True)  # high/mid/low or None (use env default)
+    auto_tier_enabled = Column(String, default="true")  # "true" or "false"
+
+    # Sandbox settings
+    sandbox_mode = Column(String, default="auto")  # local, remote, auto
+
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)

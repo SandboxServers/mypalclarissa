@@ -333,7 +333,9 @@ def register_docker_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             platforms=["discord"],  # Docker tools only for Discord
             requires_docker=True,
@@ -379,7 +381,9 @@ def register_local_file_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             requires_files=True,
         )
@@ -412,7 +416,9 @@ def register_email_tools(registry: ToolRegistry) -> None:
         registry.register(
             name=name,
             description=func_info.get("description", ""),
-            parameters=func_info.get("parameters", {"type": "object", "properties": {}}),
+            parameters=func_info.get(
+                "parameters", {"type": "object", "properties": {}}
+            ),
             handler=make_handler(name),
             platforms=["discord"],  # Email tools only for Discord
             requires_email=True,

@@ -173,6 +173,7 @@ poetry run python scripts/migrate_to_postgres.py --all
 - `DISCORD_CHANNEL_HISTORY_LIMIT` - Max messages to fetch from channel (default: 50)
 - `DISCORD_MONITOR_PORT` - Monitor dashboard port (default: 8001)
 - `DISCORD_MONITOR_ENABLED` - Enable monitor dashboard (default: true)
+- `DISCORD_STOP_PHRASES` - Comma-separated phrases that interrupt running tasks (default: "clarissa stop,stop clarissa,nevermind,never mind")
 
 ### Docker Code Execution (Discord Bot)
 Tool calling requires Docker and a tool-capable LLM:
@@ -276,6 +277,42 @@ Clarissa can interact with Azure DevOps projects, repos, work items, and pipelin
 - `ado_search_code` - Search code across repos
 - `ado_list_iterations` / `ado_list_team_iterations` - View sprints/iterations
 
+### MCP Plugin System (Discord Bot)
+Clarissa supports MCP (Model Context Protocol) servers for extending capabilities with external tools.
+
+**Configuration:**
+- `MCP_USE_DATABASE` - Store MCP server configs in database (default: false, uses JSON file)
+
+**MCP Management Tools:**
+- `mcp_list` - List installed MCP servers
+- `mcp_status` - Check MCP server status
+- `mcp_tools` - List available tools from a server
+- `mcp_install` - Install new MCP server (npm, GitHub, Docker, or Smithery)
+- `mcp_uninstall` - Remove an MCP server
+- `mcp_enable` / `mcp_disable` - Toggle MCP servers on/off
+- `mcp_restart` - Restart an MCP server
+
+MCP tools are namespaced as `mcp__servername__toolname` and run separately from native tools.
+
+### Sandbox Execution (Discord Bot)
+Clarissa uses a unified sandbox manager that can switch between local Docker and remote VPS execution.
+
+**Configuration:**
+- `SANDBOX_MODE` - Sandbox mode: "auto" (default), "local", or "remote"
+- `SANDBOX_API_URL` - Remote sandbox API URL (required for remote mode)
+- `SANDBOX_API_KEY` - Remote sandbox API key (required for remote mode)
+
+In "auto" mode, Clarissa uses local Docker if available, falling back to remote.
+
+### Email Service (Discord Bot)
+Background email monitoring with encrypted credentials and configurable rules.
+
+**Configuration:**
+- `EMAIL_ENCRYPTION_KEY` - Fernet key for encrypting IMAP passwords (required for IMAP accounts)
+- Generate key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+
+Email accounts can use Gmail OAuth (via GoogleOAuthToken) or IMAP with encrypted credentials.
+
 ## Key Patterns
 
 - Backend uses global `MemoryManager` instance initialized at startup with LLM callable
@@ -363,3 +400,42 @@ docker-compose --profile discord --profile postgres up
 ```bash
 poetry run python scripts/migrate_to_postgres.py --all
 ```
+
+### Migration Scripts
+
+Scripts for migrating data between systems or initializing new features.
+
+**Migrate mem0 Memories** (`scripts/migrate_memories.py`):
+Migrate memories between agent_ids (e.g., from "clara" to "clarissa").
+```bash
+poetry run python scripts/migrate_memories.py --dry-run      # Preview
+poetry run python scripts/migrate_memories.py --verify       # Check integrity
+poetry run python scripts/migrate_memories.py                # Apply migration
+poetry run python scripts/migrate_memories.py --old-agent-id clara --new-agent-id clarissa
+```
+Requires: mem0 configured (`OPENAI_API_KEY` + Qdrant or `MEM0_DATABASE_URL`)
+
+**Backfill Emotional Context** (`scripts/backfill_emotional.py`):
+Initialize emotional context from conversation history or Discord exports.
+```bash
+# From database
+poetry run python scripts/backfill_emotional.py --dry-run    # Preview
+poetry run python scripts/backfill_emotional.py              # Process all users
+poetry run python scripts/backfill_emotional.py --user USER_ID --days 60
+
+# From Discord export (DiscordChatExporter JSON format)
+poetry run python scripts/backfill_emotional.py --discord-export /path/to/export.json
+poetry run python scripts/backfill_emotional.py --discord-export /path/to/exports/  # Directory
+poetry run python scripts/backfill_emotional.py --discord-export /path --user 123456789
+```
+Requires: Database configured, or Discord export JSON files
+
+### Emotional Context System
+
+Clarissa tracks emotional sentiment across conversations to maintain continuity:
+- Per-message sentiment tracking (via vaderSentiment)
+- Emotional arc computation (stable, improving, declining, volatile)
+- mem0 storage for retrieval at session start
+
+**Configuration:**
+- `EMOTIONAL_IDLE_TIMEOUT_MINUTES` - Minutes before finalizing emotional context (default: 30)

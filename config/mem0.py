@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from mem0 import Memory
+
+# Use vendored mem0 with base_url fix for Anthropic
+from vendor.mem0 import Memory
 
 load_dotenv()
 
@@ -36,6 +38,10 @@ PROVIDER_DEFAULTS = {
     "openai-custom": {
         "base_url": os.getenv("CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1"),
         "api_key_env": "CUSTOM_OPENAI_API_KEY",
+    },
+    "anthropic": {
+        "base_url": os.getenv("ANTHROPIC_BASE_URL"),  # None = default API
+        "api_key_env": "ANTHROPIC_API_KEY",
     },
 }
 
@@ -165,8 +171,22 @@ def _get_llm_config() -> dict | None:
 
     print(f"[mem0] Provider: {MEM0_PROVIDER}")
     print(f"[mem0] Model: {MEM0_MODEL}")
-    print(f"[mem0] Base URL: {base_url}")
+    if base_url:
+        print(f"[mem0] Base URL: {base_url}")
 
+    # Anthropic uses native SDK with anthropic_base_url
+    if MEM0_PROVIDER == "anthropic":
+        return {
+            "provider": "anthropic",
+            "config": {
+                "model": MEM0_MODEL,
+                "api_key": api_key,
+                "anthropic_base_url": base_url,  # Now works with our vendored fix!
+                "temperature": 0,
+            },
+        }
+
+    # All other providers use OpenAI-compatible endpoints
     return {
         "provider": "openai",
         "config": {

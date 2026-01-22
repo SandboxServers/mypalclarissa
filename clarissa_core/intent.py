@@ -291,7 +291,9 @@ class IntentDetector:
 
         # Code blocks indicate task complexity
         if "code_block" in result.entities:
-            result.complexity = "moderate" if result.complexity == "simple" else result.complexity
+            result.complexity = (
+                "moderate" if result.complexity == "simple" else result.complexity
+            )
             result.requires_tools = True
 
         # Attachments often mean task work
@@ -340,7 +342,9 @@ JSON response:"""
                 data = json.loads(json_match.group())
                 result.intent_type = data.get("intent_type", result.intent_type)
                 result.complexity = data.get("complexity", result.complexity)
-                result.requires_tools = data.get("requires_tools", result.requires_tools)
+                result.requires_tools = data.get(
+                    "requires_tools", result.requires_tools
+                )
                 result.confidence = 0.85
                 result.raw_analysis = response
         except Exception:
@@ -354,7 +358,9 @@ JSON response:"""
 _detector: IntentDetector | None = None
 
 
-def get_intent_detector(llm_callable: Callable[[list[dict]], str] | None = None) -> IntentDetector:
+def get_intent_detector(
+    llm_callable: Callable[[list[dict]], str] | None = None,
+) -> IntentDetector:
     """Get or create the singleton IntentDetector instance."""
     global _detector
     if _detector is None:

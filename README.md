@@ -6,9 +6,11 @@ Personal AI assistant with persistent memory, multi-platform support, and proact
 
 ### Core
 - **Persistent Memory** - Remembers facts and preferences across sessions via [mem0](https://github.com/mem0ai/mem0)
+- **Emotional Context** - Tracks sentiment across conversations for continuity (via vaderSentiment)
 - **Multi-Platform** - Discord bot, REST API, and Next.js web interface
 - **Session Management** - Threaded conversations with context carryover
 - **Multiple LLM Backends** - OpenRouter, Anthropic, NanoGPT, OpenAI-compatible
+- **MCP Plugin System** - Extend capabilities with Model Context Protocol servers
 
 ### Smart Model Selection
 Inspired by [KIRA](https://github.com/krafton-ai/KIRA), Clarissa automatically selects the optimal model tier based on task complexity:
@@ -206,19 +208,36 @@ poetry run python clear_dbs.py --yes     # Skip confirmation
 poetry run python clear_dbs.py --user X  # Specific user
 ```
 
+### Migration Scripts
+```bash
+# Migrate mem0 memories between agent_ids
+poetry run python scripts/migrate_memories.py --dry-run
+poetry run python scripts/migrate_memories.py
+
+# Backfill emotional context from database
+poetry run python scripts/backfill_emotional.py --dry-run
+
+# Backfill from Discord export JSON (DiscordChatExporter format)
+poetry run python scripts/backfill_emotional.py --discord-export /path/to/exports/
+```
+
 ## Architecture
 
 ```
 ├── api.py                 # FastAPI server
 ├── discord_bot.py         # Discord bot with tool calling
+├── mcp_server.py          # MCP server exposing Clarissa tools
 ├── clarissa_core/
 │   ├── llm.py            # LLM provider abstraction
 │   ├── memory.py         # Memory manager (mem0 integration)
+│   ├── emotional_context.py  # Sentiment tracking across sessions
+│   ├── sentiment.py      # vaderSentiment analysis
 │   ├── pipeline.py       # Message processing pipeline
 │   ├── intent.py         # Intent detection
 │   ├── tier_selector.py  # Auto model tier selection
 │   ├── rejection.py      # Group chat response filtering
-│   └── group_session.py  # Multi-user session tracking
+│   ├── group_session.py  # Multi-user session tracking
+│   └── mcp/              # MCP plugin system
 ├── tools/                 # Tool definitions
 │   ├── github/           # GitHub integration
 │   ├── ado/              # Azure DevOps integration
@@ -228,6 +247,9 @@ poetry run python clear_dbs.py --user X  # Specific user
 │   ├── github.py
 │   ├── ado.py
 │   └── email.py
+├── scripts/              # Migration & utility scripts
+│   ├── migrate_memories.py
+│   └── backfill_emotional.py
 ├── frontend/             # Next.js web UI
 └── db/                   # Database models
 ```

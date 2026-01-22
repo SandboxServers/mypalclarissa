@@ -20,11 +20,9 @@ Environment variables:
 from __future__ import annotations
 
 import asyncio
-import base64
 import io
 import os
 import tarfile
-import tempfile
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -584,9 +582,7 @@ class DockerSandboxManager:
                     error=stderr or f"Directory not found: {path}",
                 )
 
-            return ExecutionResult(
-                success=True, output=stdout or "(empty directory)"
-            )
+            return ExecutionResult(success=True, output=stdout or "(empty directory)")
 
         except Exception as e:
             return ExecutionResult(success=False, output="", error=str(e))
@@ -657,9 +653,7 @@ class DockerSandboxManager:
             )
 
         # Create destination and extract
-        result = await self.run_shell(
-            user_id, f"mkdir -p '{destination}' && {cmd}"
-        )
+        result = await self.run_shell(user_id, f"mkdir -p '{destination}' && {cmd}")
 
         if result.success:
             # List extracted files

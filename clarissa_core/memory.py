@@ -372,9 +372,7 @@ class MemoryManager:
         for r in user_res.get("results", []):
             metadata = r.get("metadata", {})
             if metadata.get("contact_id"):
-                contact_name = metadata.get(
-                    "contact_name", metadata.get("contact_id")
-                )
+                contact_name = metadata.get("contact_name", metadata.get("contact_id"))
                 mem_text = f"[About {contact_name}]: {r['memory']}"
                 if mem_text not in user_mems:
                     user_mems.append(mem_text)
@@ -455,6 +453,7 @@ class MemoryManager:
         thread_summary: str | None,
         recent_msgs: list["Message"],
         user_message: str,
+        emotional_context: list[dict] | None = None,
     ) -> list[dict[str, str]]:
         """Build the full prompt for the LLM.
 
@@ -464,6 +463,7 @@ class MemoryManager:
             thread_summary: Optional thread summary
             recent_msgs: Recent messages in the conversation
             user_message: Current user message
+            emotional_context: Optional emotional context from recent sessions
 
         Returns:
             List of messages ready for LLM
@@ -483,6 +483,12 @@ class MemoryManager:
             proj_block = "\n".join(f"- {m}" for m in proj_mems)
             context_parts.append(f"PROJECT MEMORIES:\n{proj_block}")
 
+        # Add emotional context from recent sessions (for tone calibration)
+        if emotional_context:
+            emotional_block = self._format_emotional_context(emotional_context)
+            if emotional_block:
+                context_parts.append(f"RECENT EMOTIONAL CONTEXT:\n{emotional_block}")
+
         if thread_summary:
             context_parts.append(f"THREAD SUMMARY:\n{thread_summary}")
 
@@ -498,3 +504,43 @@ class MemoryManager:
 
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    def _format_emotional_context(self, emotional_context: list[dict]) -> str:
+        """Format emotional context for inclusion in the system prompt.
+
+        Only includes non-neutral contexts to avoid noise.
+
+        Args:
+            emotional_context: List of emotional context dicts
+
+        Returns:
+            Formatted string for the prompt, or empty string if nothing meaningful
+        """
+        if not emotional_context:
+            return ""
+
+        lines = []
+        for ctx in emotional_context:
+            memory = ctx.get("memory", "")
+            arc = ctx.get("arc", "stable")
+            energy = ctx.get("energy", "neutral")
+            channel_name = ctx.get("channel_name", "")
+            is_dm = ctx.get("is_dm", False)
+
+            # Skip stable/neutral contexts - not worth mentioning
+            if arc == "stable" and energy in ("neutral", "casual"):
+                continue
+
+            # Format channel hint
+            if is_dm:
+                channel_hint = "DM"
+            elif channel_name:
+                channel_hint = (
+                    channel_name if channel_name.startswith("#") else f"#{channel_name}"
+                )
+            else:
+                channel_hint = "unknown"
+
+            lines.append(f"- [{channel_hint}] {memory}")
+
+        return "\n".join(lines) if lines else ""

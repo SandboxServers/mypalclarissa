@@ -101,8 +101,10 @@ class MessagePipeline:
 
     def __init__(
         self,
-        response_generator: Callable[[PipelineContext], Awaitable[tuple[str, list]]] | None = None,
-        memory_extractor: Callable[[PipelineContext, str], Awaitable[None]] | None = None,
+        response_generator: Callable[[PipelineContext], Awaitable[tuple[str, list]]]
+        | None = None,
+        memory_extractor: Callable[[PipelineContext, str], Awaitable[None]]
+        | None = None,
     ):
         """Initialize the pipeline.
 
@@ -173,9 +175,7 @@ class MessagePipeline:
 
             # Stage 4: Memory Extraction (async, non-blocking)
             if self._memory_extractor:
-                asyncio.create_task(
-                    self._stage_extract_memories(ctx, response)
-                )
+                asyncio.create_task(self._stage_extract_memories(ctx, response))
 
             return PipelineResult(
                 response=response,
@@ -244,9 +244,7 @@ class MessagePipeline:
 
         return ctx
 
-    async def _stage_generate_response(
-        self, ctx: PipelineContext
-    ) -> tuple[str, list]:
+    async def _stage_generate_response(self, ctx: PipelineContext) -> tuple[str, list]:
         """Stage 3: Generate response using selected tier."""
         start = asyncio.get_event_loop().time()
 
@@ -286,6 +284,7 @@ class MessagePipeline:
         # Import here to avoid circular imports
         try:
             from config.logging import get_logger
+
             logger = get_logger("pipeline")
             logger.debug(f"[Pipeline] {message}")
         except ImportError:
@@ -297,7 +296,8 @@ _pipeline: MessagePipeline | None = None
 
 
 def get_pipeline(
-    response_generator: Callable[[PipelineContext], Awaitable[tuple[str, list]]] | None = None,
+    response_generator: Callable[[PipelineContext], Awaitable[tuple[str, list]]]
+    | None = None,
     memory_extractor: Callable[[PipelineContext, str], Awaitable[None]] | None = None,
 ) -> MessagePipeline:
     """Get or create the singleton MessagePipeline instance.

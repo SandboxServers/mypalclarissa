@@ -74,6 +74,15 @@ from clarissa_core import (
     cleanup_stale_sessions,
 )
 
+# Import emotional context tracking
+from clarissa_core.emotional_context import (
+    finalize_conversation_emotional_context,
+    has_pending_emotional_context,
+)
+
+# Import MCP plugin system
+from clarissa_core.mcp import get_mcp_manager, init_mcp
+
 # Initialize logging system
 init_logging()
 logger = get_logger("discord")
@@ -87,6 +96,16 @@ MAX_CHARS = int(os.getenv("DISCORD_MAX_CHARS", "100000"))
 MAX_FILE_SIZE = int(os.getenv("DISCORD_MAX_FILE_SIZE", "100000"))  # 100KB default
 SUMMARY_AGE_MINUTES = int(os.getenv("DISCORD_SUMMARY_AGE_MINUTES", "30"))
 CHANNEL_HISTORY_LIMIT = int(os.getenv("DISCORD_CHANNEL_HISTORY_LIMIT", "50"))
+
+# Stop phrase configuration - phrases that interrupt running tasks
+STOP_PHRASES = [
+    phrase.strip().lower()
+    for phrase in os.getenv(
+        "DISCORD_STOP_PHRASES",
+        "clarissa stop,stop clarissa,nevermind,never mind",
+    ).split(",")
+    if phrase.strip()
+]
 
 # Supported text file extensions
 TEXT_EXTENSIONS = {
@@ -145,16 +164,22 @@ MAX_TOOL_ITERATIONS = 75  # Max tool call rounds per response
 # Auto-continue configuration
 # When Clarissa ends with a permission-seeking question, auto-continue without waiting
 AUTO_CONTINUE_ENABLED = os.getenv("DISCORD_AUTO_CONTINUE", "true").lower() == "true"
-AUTO_CONTINUE_MAX = int(os.getenv("DISCORD_AUTO_CONTINUE_MAX", "3"))  # Max auto-continues per conversation
+AUTO_CONTINUE_MAX = int(
+    os.getenv("DISCORD_AUTO_CONTINUE_MAX", "3")
+)  # Max auto-continues per conversation
 
 # KIRA-inspired auto tier selection
 # Automatically select model tier based on task complexity
 AUTO_TIER_ENABLED = os.getenv("AUTO_TIER_ENABLED", "true").lower() == "true"
-AUTO_TIER_SHOW_SELECTION = os.getenv("AUTO_TIER_SHOW_SELECTION", "false").lower() == "true"  # Show auto-selected tier to user
+AUTO_TIER_SHOW_SELECTION = (
+    os.getenv("AUTO_TIER_SHOW_SELECTION", "false").lower() == "true"
+)  # Show auto-selected tier to user
 
 # Organic response system (HuixiangDou-inspired)
 # Allow bot to respond in group chats even without explicit mention, based on rejection classifier
-ORGANIC_RESPONSE_ENABLED = os.getenv("ORGANIC_RESPONSE_ENABLED", "true").lower() == "true"
+ORGANIC_RESPONSE_ENABLED = (
+    os.getenv("ORGANIC_RESPONSE_ENABLED", "true").lower() == "true"
+)
 ORGANIC_CONFIDENCE_THRESHOLD = float(os.getenv("ORGANIC_CONFIDENCE_THRESHOLD", "0.4"))
 ORGANIC_COOLDOWN_MINUTES = int(os.getenv("ORGANIC_COOLDOWN_MINUTES", "3"))
 ORGANIC_DAILY_LIMIT = int(os.getenv("ORGANIC_DAILY_LIMIT", "50"))
@@ -194,6 +219,20 @@ AUTO_CONTINUE_PATTERNS = [
 
 # Track whether modular tools have been initialized
 _modular_tools_initialized = False
+_mcp_initialized = False
+
+
+def is_stop_phrase(content: str) -> bool:
+    """Check if the message content matches a stop phrase.
+
+    Stop phrases interrupt running tasks. They are checked case-insensitively.
+    """
+    if not STOP_PHRASES:
+        return False
+    content_lower = content.lower().strip()
+    # Remove bot mentions for comparison
+    content_lower = re.sub(r"<@!?\d+>", "", content_lower).strip()
+    return content_lower in STOP_PHRASES
 
 
 def _should_auto_continue(response: str) -> bool:
@@ -249,11 +288,38 @@ async def init_modular_tools() -> None:
         tools_logger.error(f"Failed to initialize modular tools: {e}")
 
 
+async def init_mcp_plugins() -> None:
+    """Initialize the MCP plugin system.
+
+    Loads enabled MCP servers from the database. MCP tools are served
+    directly through the manager's format conversion methods.
+    """
+    global _mcp_initialized
+    if _mcp_initialized:
+        return
+
+    try:
+        manager = await init_mcp()
+        connected = len(manager)
+        tool_count = len(manager.get_tools_openai_format())
+
+        if connected > 0:
+            tools_logger.info(
+                f"MCP: {connected} servers connected, {tool_count} tools available"
+            )
+        else:
+            tools_logger.info("MCP: No servers configured (use mcp_install to add)")
+
+        _mcp_initialized = True
+    except Exception as e:
+        tools_logger.error(f"Failed to initialize MCP plugins: {e}")
+
+
 def get_all_tools(include_docker: bool = True) -> list[dict]:
-    """Get all available tools from the modular registry.
+    """Get all available tools from the modular registry and MCP servers.
 
     Args:
-        include_docker: Whether to include Docker sandbox tools (for capability filtering)
+        include_docker: Whether to include Docker sandbox tools
 
     Returns:
         List of tool definitions in OpenAI format
@@ -264,7 +330,33 @@ def get_all_tools(include_docker: bool = True) -> list[dict]:
 
     registry = get_registry()
     capabilities = {"docker": include_docker}
-    return registry.get_tools(platform="discord", capabilities=capabilities, format="openai")
+    native_tools = registry.get_tools(
+        platform="discord", capabilities=capabilities, format="openai"
+    )
+
+    # Get MCP tools directly from manager
+    mcp_tools = []
+    if _mcp_initialized:
+        try:
+            manager = get_mcp_manager()
+            mcp_tools = manager.get_tools_openai_format()
+        except Exception as e:
+            tools_logger.warning(f"Failed to get MCP tools: {e}")
+
+    # Combine tools with deduplication
+    all_tools = native_tools + mcp_tools
+    seen_names = set()
+    unique_tools = []
+    for tool in all_tools:
+        name = tool.get("function", {}).get("name", "")
+        if name in seen_names:
+            tools_logger.warning(f"Duplicate tool detected: {name} (skipping)")
+            continue
+        seen_names.add(name)
+        unique_tools.append(tool)
+
+    return unique_tools
+
 
 # Discord message limit
 DISCORD_MSG_LIMIT = 2000
@@ -368,6 +460,8 @@ class TaskQueue:
     def __init__(self):
         # Active tasks: channel_id -> message being processed
         self._active: dict[int, DiscordMessage] = {}
+        # Running asyncio tasks: channel_id -> asyncio.Task (for cancellation)
+        self._running_tasks: dict[int, asyncio.Task] = {}
         # Queued tasks: channel_id -> list of queued tasks
         self._queues: dict[int, list[QueuedTask]] = {}
         self._lock = asyncio.Lock()
@@ -447,6 +541,46 @@ class TaskQueue:
     def get_stats_unsafe(self) -> dict:
         """Get queue statistics without lock (for sync callers, may be slightly stale)."""
         return self._get_stats_sync()
+
+    def register_task(self, channel_id: int, task: asyncio.Task):
+        """Register the running asyncio task for a channel (for cancellation)."""
+        self._running_tasks[channel_id] = task
+
+    def unregister_task(self, channel_id: int):
+        """Unregister the running task for a channel."""
+        self._running_tasks.pop(channel_id, None)
+
+    async def cancel_and_clear(self, channel_id: int) -> bool:
+        """Cancel the running task and clear the queue for a channel.
+
+        Returns True if a task was cancelled, False if nothing was running.
+        """
+        async with self._lock:
+            cancelled = False
+
+            # Cancel the running asyncio task if any
+            if channel_id in self._running_tasks:
+                task = self._running_tasks[channel_id]
+                if not task.done():
+                    task.cancel()
+                    cancelled = True
+                    logger.info(f"Cancelled running task for channel {channel_id}")
+                del self._running_tasks[channel_id]
+
+            # Clear the active message
+            if channel_id in self._active:
+                del self._active[channel_id]
+
+            # Clear the queue
+            if channel_id in self._queues:
+                queue_len = len(self._queues[channel_id])
+                if queue_len > 0:
+                    logger.info(
+                        f"Cleared {queue_len} queued task(s) for channel {channel_id}"
+                    )
+                del self._queues[channel_id]
+
+            return cancelled
 
 
 # Global task queue instance
@@ -561,17 +695,22 @@ class ClarissaDiscordBot(discord.Client):
     def _setup_commands(self):
         """Set up slash commands."""
 
-        @self.tree.command(name="sensitivity", description="Adjust Clarissa's response sensitivity for this channel")
+        @self.tree.command(
+            name="sensitivity",
+            description="Adjust Clarissa's response sensitivity for this channel",
+        )
         @app_commands.describe(
             level="Sensitivity level: lower = more responses, higher = more selective"
         )
-        @app_commands.choices(level=[
-            app_commands.Choice(name="Very Chatty (0.2)", value="0.2"),
-            app_commands.Choice(name="Chatty (0.3)", value="0.3"),
-            app_commands.Choice(name="Balanced (0.35)", value="0.35"),
-            app_commands.Choice(name="Selective (0.4)", value="0.4"),
-            app_commands.Choice(name="Quiet (0.5)", value="0.5"),
-        ])
+        @app_commands.choices(
+            level=[
+                app_commands.Choice(name="Very Chatty (0.2)", value="0.2"),
+                app_commands.Choice(name="Chatty (0.3)", value="0.3"),
+                app_commands.Choice(name="Balanced (0.35)", value="0.35"),
+                app_commands.Choice(name="Selective (0.4)", value="0.4"),
+                app_commands.Choice(name="Quiet (0.5)", value="0.5"),
+            ]
+        )
         async def sensitivity_cmd(interaction: discord.Interaction, level: str):
             """Adjust organic response sensitivity for this channel."""
             from db.models import ChannelSettings
@@ -581,7 +720,9 @@ class ClarissaDiscordBot(discord.Client):
 
             db = SessionLocal()
             try:
-                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                settings = (
+                    db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                )
                 if not settings:
                     settings = ChannelSettings(
                         channel_id=channel_id,
@@ -602,18 +743,19 @@ class ClarissaDiscordBot(discord.Client):
 
                 await interaction.response.send_message(
                     f"Set organic response sensitivity to **{level}** ({desc}) for this channel.",
-                    ephemeral=True
+                    ephemeral=True,
                 )
             except Exception as e:
                 logger.exception(f"Error updating sensitivity: {e}")
                 await interaction.response.send_message(
-                    f"Error updating sensitivity: {e}",
-                    ephemeral=True
+                    f"Error updating sensitivity: {e}", ephemeral=True
                 )
             finally:
                 db.close()
 
-        @self.tree.command(name="quiet", description="Toggle quiet mode - only respond when mentioned")
+        @self.tree.command(
+            name="quiet", description="Toggle quiet mode - only respond when mentioned"
+        )
         async def quiet_cmd(interaction: discord.Interaction):
             """Toggle quiet mode for this channel."""
             from db.models import ChannelSettings
@@ -623,7 +765,9 @@ class ClarissaDiscordBot(discord.Client):
 
             db = SessionLocal()
             try:
-                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                settings = (
+                    db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                )
                 if not settings:
                     settings = ChannelSettings(
                         channel_id=channel_id,
@@ -639,12 +783,12 @@ class ClarissaDiscordBot(discord.Client):
                 if settings.quiet_mode == "true":
                     await interaction.response.send_message(
                         "Quiet mode **enabled**. I'll only respond when mentioned or replied to.",
-                        ephemeral=True
+                        ephemeral=True,
                     )
                 else:
                     await interaction.response.send_message(
                         "Quiet mode **disabled**. I may respond organically to relevant conversations.",
-                        ephemeral=True
+                        ephemeral=True,
                     )
             except Exception as e:
                 logger.exception(f"Error toggling quiet mode: {e}")
@@ -652,7 +796,9 @@ class ClarissaDiscordBot(discord.Client):
             finally:
                 db.close()
 
-        @self.tree.command(name="stats", description="Show Clarissa's activity stats for this channel")
+        @self.tree.command(
+            name="stats", description="Show Clarissa's activity stats for this channel"
+        )
         async def stats_cmd(interaction: discord.Interaction):
             """Show channel statistics."""
             from db.models import ChannelSettings
@@ -660,12 +806,15 @@ class ClarissaDiscordBot(discord.Client):
             channel_id = str(interaction.channel_id)
             db = SessionLocal()
             try:
-                settings = db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                settings = (
+                    db.query(ChannelSettings).filter_by(channel_id=channel_id).first()
+                )
 
                 if settings:
                     response_rate = (
                         settings.total_responses / settings.total_messages_seen * 100
-                        if settings.total_messages_seen > 0 else 0
+                        if settings.total_messages_seen > 0
+                        else 0
                     )
                     msg = (
                         f"**Channel Stats**\n"
@@ -854,6 +1003,9 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
         # Initialize modular tools system (GitHub, ADO, etc.)
         await init_modular_tools()
 
+        # Initialize MCP plugin system
+        await init_mcp_plugins()
+
         # Update monitor
         monitor.bot_user = str(self.user)
         monitor.start_time = datetime.now(UTC)
@@ -866,6 +1018,7 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
         # Start KIRA-inspired proactive checkers
         try:
             from checkers import get_scheduler
+
             scheduler = get_scheduler(bot=self, db_session_factory=SessionLocal)
             await scheduler.start()
             logger.info("Proactive checkers started")
@@ -896,7 +1049,9 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
 
         # Track message in group session (for context and coreference)
         if not is_dm:
-            thread_id = str(message.channel.id) if hasattr(message.channel, 'parent') else None
+            thread_id = (
+                str(message.channel.id) if hasattr(message.channel, "parent") else None
+            )
             group_session = get_group_session(
                 channel_id=str(message.channel.id),
                 thread_id=thread_id,
@@ -908,6 +1063,26 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                 content=message.content,
                 timestamp=message.created_at.replace(tzinfo=None),
             )
+
+        # Check for stop phrase - bypass queue and cancel running task
+        if is_stop_phrase(message.content):
+            channel_id = message.channel.id
+            was_cancelled = await task_queue.cancel_and_clear(channel_id)
+            if was_cancelled:
+                await message.reply(
+                    "-# 🛑 Stopping... I've cancelled my current task.",
+                    mention_author=False,
+                )
+                guild_name = message.guild.name if message.guild else "DM"
+                channel_name = getattr(message.channel, "name", "DM")
+                monitor.log(
+                    "system",
+                    message.author.display_name,
+                    "Stopped running task via stop phrase",
+                    guild_name,
+                    channel_name,
+                )
+            return
 
         # For DMs: always respond (no mention needed)
         # For channels: require mention, reply, or organic response
@@ -945,26 +1120,39 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                         # Clean old entries
                         if channel_key in _organic_response_counts:
                             _organic_response_counts[channel_key] = [
-                                t for t in _organic_response_counts[channel_key]
+                                t
+                                for t in _organic_response_counts[channel_key]
                                 if now - t < timedelta(minutes=ORGANIC_COOLDOWN_MINUTES)
                             ]
                         else:
                             _organic_response_counts[channel_key] = []
 
                         # Check daily limit
-                        today_count = len([
-                            t for t in _organic_response_counts.get(channel_key, [])
-                            if now - t < timedelta(days=1)
-                        ])
+                        today_count = len(
+                            [
+                                t
+                                for t in _organic_response_counts.get(channel_key, [])
+                                if now - t < timedelta(days=1)
+                            ]
+                        )
 
-                        if today_count < ORGANIC_DAILY_LIMIT and len(_organic_response_counts[channel_key]) == 0:
+                        if (
+                            today_count < ORGANIC_DAILY_LIMIT
+                            and len(_organic_response_counts[channel_key]) == 0
+                        ):
                             is_organic = True
                             _organic_response_counts[channel_key].append(now)
-                            logger.info(f"Organic response triggered: {rejection_result.reason}")
+                            logger.info(
+                                f"Organic response triggered: {rejection_result.reason}"
+                            )
                         else:
-                            logger.debug(f"Organic response rate limited (daily={today_count}, cooldown={len(_organic_response_counts[channel_key])})")
+                            logger.debug(
+                                f"Organic response rate limited (daily={today_count}, cooldown={len(_organic_response_counts[channel_key])})"
+                            )
                     else:
-                        logger.debug(f"Organic response rejected: {rejection_result.code.value} - {rejection_result.reason}")
+                        logger.debug(
+                            f"Organic response rejected: {rejection_result.code.value} - {rejection_result.reason}"
+                        )
 
                 if not is_organic:
                     return
@@ -1263,7 +1451,11 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                         response[:200] + "..." if len(response) > 200 else response
                     )
                     monitor.log(
-                        "response", "Clarissa", response_preview, guild_name, channel_name
+                        "response",
+                        "Clarissa",
+                        response_preview,
+                        guild_name,
+                        channel_name,
                     )
 
                     # Check for auto-continue (Clarissa asking permission to proceed)
@@ -1641,10 +1833,14 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
             # Always use tools (local file tools are always available)
             # Build the active tool list dynamically (includes modular tools like GitHub, ADO)
             if docker_available:
-                tools_logger.info("Using tool-calling mode (Docker + local files + modular)")
+                tools_logger.info(
+                    "Using tool-calling mode (Docker + local files + modular)"
+                )
                 active_tools = get_all_tools(include_docker=True)
             else:
-                tools_logger.info("Using tool-calling mode (local files + modular only)")
+                tools_logger.info(
+                    "Using tool-calling mode (local files + modular only)"
+                )
                 active_tools = get_all_tools(include_docker=False)
 
             # Generate with tools
@@ -1680,15 +1876,20 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                             if content:
                                 discord_files.append(
                                     discord.File(
-                                        fp=io.BytesIO(content),
-                                        filename=file_path.name
+                                        fp=io.BytesIO(content), filename=file_path.name
                                     )
                                 )
-                                logger.debug(f" Adding local file: {file_path.name} ({len(content)} bytes)")
+                                logger.debug(
+                                    f" Adding local file: {file_path.name} ({len(content)} bytes)"
+                                )
                             else:
-                                logger.warning(f" Local file is empty: {file_path.name}")
+                                logger.warning(
+                                    f" Local file is empty: {file_path.name}"
+                                )
                         except Exception as e:
-                            logger.error(f" Failed to read local file {file_path.name}: {e}")
+                            logger.error(
+                                f" Failed to read local file {file_path.name}: {e}"
+                            )
 
             # Split the response into chunks and send each
             chunks = self._split_message(cleaned_response)
@@ -2041,7 +2242,10 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
         )
 
         def final_call():
-            from clarissa_core.llm import TOOL_FORMAT, _convert_messages_to_claude_format
+            from clarissa_core.llm import (
+                TOOL_FORMAT,
+                _convert_messages_to_claude_format,
+            )
 
             llm = make_llm()  # Use simple LLM for final response
             # Convert messages if using Claude format
@@ -2065,12 +2269,30 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
     ) -> str:
         """Execute a tool and return the output string.
 
-        Handles Docker sandbox tools, local file tools, and chat history tools.
+        Handles MCP, Docker sandbox, local file, and chat history tools.
         """
-        from pathlib import Path
+        import time
+
+        exec_start = time.time()
 
         # Get channel_id for file storage organization
         channel_id = str(channel.id) if channel else None
+
+        # Route MCP tools directly to manager (bypass registry)
+        if "__" in tool_name and _mcp_initialized:
+            try:
+                manager = get_mcp_manager()
+                if manager.is_mcp_tool(tool_name):
+                    tools_logger.debug(f"[EXEC] Routing {tool_name} to MCP manager")
+                    result = await manager.call_tool(tool_name, arguments)
+                    tools_logger.debug(
+                        f"[EXEC] {tool_name} completed in "
+                        f"{time.time() - exec_start:.2f}s"
+                    )
+                    return result
+            except Exception as e:
+                tools_logger.error(f"MCP tool {tool_name} failed: {e}")
+                return f"Error executing MCP tool {tool_name}: {e}"
 
         # Docker sandbox tools (including web_search which uses Tavily)
         docker_tools = {
@@ -2404,7 +2626,9 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
 
         # Primary pattern: <<<file:filename>>>content<<</file>>>
         # Also handles <<</file:filename>>> closing variant
-        primary_pattern = r"<<<\s*file\s*:\s*([^>]+?)\s*>>>(.*?)<<<\s*/\s*file\s*(?::\s*[^>]*)?\s*>>>"
+        primary_pattern = (
+            r"<<<\s*file\s*:\s*([^>]+?)\s*>>>(.*?)<<<\s*/\s*file\s*(?::\s*[^>]*)?\s*>>>"
+        )
 
         def replace_file(match):
             filename = match.group(1).strip()
@@ -2413,11 +2637,17 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
             files.append((filename, content))
             return f"📎 *Attached: {filename}*"
 
-        cleaned = re.sub(primary_pattern, replace_file, cleaned, flags=re.DOTALL | re.IGNORECASE)
+        cleaned = re.sub(
+            primary_pattern, replace_file, cleaned, flags=re.DOTALL | re.IGNORECASE
+        )
 
         # Fallback pattern: <<<file:filename>>>content<<<end>>> or <<<endfile>>>
-        fallback_pattern = r"<<<\s*file\s*:\s*([^>]+?)\s*>>>(.*?)<<<\s*(?:end|endfile)\s*>>>"
-        cleaned = re.sub(fallback_pattern, replace_file, cleaned, flags=re.DOTALL | re.IGNORECASE)
+        fallback_pattern = (
+            r"<<<\s*file\s*:\s*([^>]+?)\s*>>>(.*?)<<<\s*(?:end|endfile)\s*>>>"
+        )
+        cleaned = re.sub(
+            fallback_pattern, replace_file, cleaned, flags=re.DOTALL | re.IGNORECASE
+        )
 
         # Last resort: <<<file:filename>>> followed by content until next <<< or end of major section
         # This catches cases where Clarissa forgets the closing tag entirely
@@ -2431,24 +2661,31 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                 if len(content) > 10 and not content.startswith("<<<"):
                     # Don't re-extract if we already got this file
                     if not any(f[0] == filename for f in files):
-                        logger.debug(f" Matched unclosed file: {filename} ({len(content)} chars)")
+                        logger.debug(
+                            f" Matched unclosed file: {filename} ({len(content)} chars)"
+                        )
                         files.append((filename, content))
                         return f"📎 *Attached: {filename}*"
                 return match.group(0)
 
-            cleaned = re.sub(unclosed_pattern, replace_unclosed, cleaned, flags=re.DOTALL | re.IGNORECASE)
+            cleaned = re.sub(
+                unclosed_pattern,
+                replace_unclosed,
+                cleaned,
+                flags=re.DOTALL | re.IGNORECASE,
+            )
 
         # Debug: check if we still have unmatched file tags
         remaining_tags = re.findall(r"<<<\s*file\s*:", cleaned, re.IGNORECASE)
         if remaining_tags:
-            logger.warning(f"Found {len(remaining_tags)} unmatched <<<file: tag(s) after extraction")
+            logger.warning(
+                f"Found {len(remaining_tags)} unmatched <<<file: tag(s) after extraction"
+            )
             logger.debug(f"Text snippet: {cleaned[:500]}")
 
         return cleaned, files
 
-    def _create_discord_files(
-        self, files: list[tuple[str, str]]
-    ) -> list[discord.File]:
+    def _create_discord_files(self, files: list[tuple[str, str]]) -> list[discord.File]:
         """Create discord.File objects from extracted file content.
 
         Uses BytesIO for in-memory file handling (no temp files needed).
@@ -2466,8 +2703,7 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                 # Encode content to bytes and wrap in BytesIO
                 content_bytes = content.encode("utf-8")
                 discord_file = discord.File(
-                    fp=io.BytesIO(content_bytes),
-                    filename=filename
+                    fp=io.BytesIO(content_bytes), filename=filename
                 )
                 discord_files.append(discord_file)
                 logger.debug(f" Created file: {filename} ({len(content_bytes)} bytes)")
@@ -2476,7 +2712,6 @@ Note: Messages prefixed with [Username] are from other users. Address people by 
                 logger.debug(f" Error creating file {filename}: {e}")
 
         return discord_files
-
 
     async def _store_exchange(
         self,

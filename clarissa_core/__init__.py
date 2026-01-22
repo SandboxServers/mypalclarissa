@@ -28,7 +28,25 @@ def get_version() -> str:
     """Get the current Clarissa platform version."""
     return __version__
 
+
 from clarissa_core.config import get_config, init_platform
+
+# Emotional context and sentiment tracking
+from clarissa_core.sentiment import (
+    analyze_sentiment,
+    classify_sentiment,
+    get_sentiment_summary,
+)
+from clarissa_core.emotional_context import (
+    EmotionalSummary,
+    track_message_sentiment,
+    get_conversation_sentiments,
+    clear_conversation_sentiments,
+    compute_emotional_arc,
+    finalize_conversation_emotional_context,
+    has_pending_emotional_context,
+)
+
 from clarissa_core.llm import (
     ModelTier,
     make_llm,
@@ -80,6 +98,20 @@ from clarissa_core.group_session import (
     cleanup_stale_sessions,
 )
 
+# MCP Plugin System (standalone, separate from native tools)
+from clarissa_core.mcp import (
+    MCPServerManager,
+    MCPInstaller,
+    MCPClient,
+    MCPTool,
+    MCPServerConfig,
+    InstallResult,
+    init_mcp,
+    get_mcp_manager,
+    load_server_config,
+    save_server_config,
+)
+
 __all__ = [
     # Version
     "__version__",
@@ -94,6 +126,18 @@ __all__ = [
     "PlatformAdapter",
     "PlatformContext",
     "PlatformMessage",
+    # Sentiment analysis
+    "analyze_sentiment",
+    "classify_sentiment",
+    "get_sentiment_summary",
+    # Emotional context tracking
+    "EmotionalSummary",
+    "track_message_sentiment",
+    "get_conversation_sentiments",
+    "clear_conversation_sentiments",
+    "compute_emotional_arc",
+    "finalize_conversation_emotional_context",
+    "has_pending_emotional_context",
     # LLM functions
     "make_llm",
     "make_llm_streaming",
@@ -131,4 +175,15 @@ __all__ = [
     "Participant",
     "get_group_session",
     "cleanup_stale_sessions",
+    # MCP Plugin System
+    "MCPServerManager",
+    "MCPInstaller",
+    "MCPClient",
+    "MCPTool",
+    "MCPServerConfig",
+    "InstallResult",
+    "init_mcp",
+    "get_mcp_manager",
+    "load_server_config",
+    "save_server_config",
 ]

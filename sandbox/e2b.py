@@ -29,8 +29,8 @@ from typing import Any
 
 # E2B imports - optional dependency
 try:
-    from e2b_code_interpreter import Sandbox as CodeInterpreterSandbox
     from e2b import Sandbox as BaseSandbox
+    from e2b_code_interpreter import Sandbox as CodeInterpreterSandbox
 
     E2B_AVAILABLE = True
 except ImportError:
@@ -501,7 +501,9 @@ class E2BSandboxManager:
                     None, lambda: sandbox.files.read(path)
                 )
                 # content is bytes
-                text = content.decode("utf-8") if isinstance(content, bytes) else content
+                text = (
+                    content.decode("utf-8") if isinstance(content, bytes) else content
+                )
                 return ExecutionResult(success=True, output=text)
             except Exception as e:
                 if self._is_sandbox_error(e) and attempt < max_retries - 1:
@@ -559,8 +561,7 @@ class E2BSandboxManager:
                     None, lambda: sandbox.files.list(path)
                 )
                 file_list = "\n".join(
-                    f"{'[dir]' if f.is_dir else '[file]'} {f.name}"
-                    for f in files
+                    f"{'[dir]' if f.is_dir else '[file]'} {f.name}" for f in files
                 )
                 return ExecutionResult(
                     success=True, output=file_list or "(empty directory)"
@@ -785,7 +786,9 @@ class E2BSandboxManager:
 
             # Create a dedicated sandbox with Claude Code template
             # This sandbox is separate from the user's code interpreter sandbox
-            print(f"[e2b] Creating Claude Code sandbox (timeout: {timeout_minutes}m)...")
+            print(
+                f"[e2b] Creating Claude Code sandbox (timeout: {timeout_minutes}m)..."
+            )
             sandbox = await loop.run_in_executor(
                 None,
                 lambda: BaseSandbox(
@@ -801,7 +804,7 @@ class E2BSandboxManager:
 
                 # Run Claude Code with the task via pipe
                 # Using -p flag for non-interactive mode
-                print(f"[e2b] Running Claude Code agent...")
+                print("[e2b] Running Claude Code agent...")
                 cmd = f"echo '{escaped_task}' | claude -p"
 
                 result = await loop.run_in_executor(
@@ -818,7 +821,7 @@ class E2BSandboxManager:
                     output += f"\n\n[stderr]:\n{result.stderr}"
 
                 # List files created in /home/user
-                print(f"[e2b] Listing created files...")
+                print("[e2b] Listing created files...")
                 files_result = await loop.run_in_executor(
                     None,
                     lambda: sandbox.commands.run(
@@ -871,7 +874,11 @@ class E2BSandboxManager:
         try:
             if tool_name == "execute_python":
                 # Handle both 'code' and 'python_code' argument names
-                code = arguments.get("code") or arguments.get("python_code") or arguments.get("script")
+                code = (
+                    arguments.get("code")
+                    or arguments.get("python_code")
+                    or arguments.get("script")
+                )
                 if not code:
                     return ExecutionResult(
                         success=False,
@@ -887,55 +894,82 @@ class E2BSandboxManager:
                 package = arguments.get("package") or arguments.get("name")
                 if not package:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'package' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'package' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.install_package(user_id, package)
             elif tool_name == "read_file":
-                path = arguments.get("path") or arguments.get("file_path") or arguments.get("filename")
+                path = (
+                    arguments.get("path")
+                    or arguments.get("file_path")
+                    or arguments.get("filename")
+                )
                 if not path:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'path' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'path' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.read_file(user_id, path)
             elif tool_name == "write_file":
-                path = arguments.get("path") or arguments.get("file_path") or arguments.get("filename")
-                content = arguments.get("content") or arguments.get("data") or arguments.get("text")
+                path = (
+                    arguments.get("path")
+                    or arguments.get("file_path")
+                    or arguments.get("filename")
+                )
+                content = (
+                    arguments.get("content")
+                    or arguments.get("data")
+                    or arguments.get("text")
+                )
                 if not path or content is None:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'path' or 'content' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'path' or 'content' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.write_file(user_id, path, content)
             elif tool_name == "list_files":
                 return await self.list_files(
-                    user_id, arguments.get("path") or arguments.get("directory") or "/home/user"
+                    user_id,
+                    arguments.get("path") or arguments.get("directory") or "/home/user",
                 )
             elif tool_name == "run_shell":
                 command = arguments.get("command") or arguments.get("cmd")
                 if not command:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'command' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'command' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.run_shell(user_id, command)
             elif tool_name == "unzip_file":
-                path = arguments.get("path") or arguments.get("file_path") or arguments.get("archive")
+                path = (
+                    arguments.get("path")
+                    or arguments.get("file_path")
+                    or arguments.get("archive")
+                )
                 if not path:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'path' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'path' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.unzip_file(
                     user_id, path, arguments.get("destination") or arguments.get("dest")
                 )
             elif tool_name == "web_search":
-                query = arguments.get("query") or arguments.get("q") or arguments.get("search")
+                query = (
+                    arguments.get("query")
+                    or arguments.get("q")
+                    or arguments.get("search")
+                )
                 if not query:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'query' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'query' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.web_search(
                     query,
@@ -943,11 +977,16 @@ class E2BSandboxManager:
                     arguments.get("search_depth", "basic"),
                 )
             elif tool_name == "run_claude_code":
-                task = arguments.get("task") or arguments.get("prompt") or arguments.get("instructions")
+                task = (
+                    arguments.get("task")
+                    or arguments.get("prompt")
+                    or arguments.get("instructions")
+                )
                 if not task:
                     return ExecutionResult(
-                        success=False, output="",
-                        error=f"Missing 'task' argument. Received: {list(arguments.keys())}"
+                        success=False,
+                        output="",
+                        error=f"Missing 'task' argument. Received: {list(arguments.keys())}",
                     )
                 return await self.run_claude_code(
                     task,

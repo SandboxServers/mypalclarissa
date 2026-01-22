@@ -74,6 +74,7 @@ class ClarissaConfig:
     # Discord
     discord_bot_token: str = ""
     discord_client_id: str = ""
+    discord_allowed_servers: str = ""
     discord_allowed_channels: str = ""
     discord_allowed_roles: str = ""
     discord_max_messages: int = 25
@@ -93,13 +94,13 @@ class ClarissaConfig:
 
     # Local file storage
     clarissa_files_dir: str = "./clarissa_files"
-    clara_max_file_size: int = 50 * 1024 * 1024  # 50MB
+    clarissa_max_file_size: int = 50 * 1024 * 1024  # 50MB
 
     # Email
-    clara_email_address: str = ""
-    clara_email_password: str = ""
-    clara_email_notify_user: str = ""
-    clara_email_notify: bool = False
+    clarissa_email_address: str = ""
+    clarissa_email_password: str = ""
+    clarissa_email_notify_user: str = ""
+    clarissa_email_notify: bool = False
 
     # Paths
     base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
@@ -172,6 +173,7 @@ class ClarissaConfig:
             # Discord
             discord_bot_token=os.getenv("DISCORD_BOT_TOKEN", ""),
             discord_client_id=os.getenv("DISCORD_CLIENT_ID", ""),
+            discord_allowed_servers=os.getenv("DISCORD_ALLOWED_SERVERS", ""),
             discord_allowed_channels=os.getenv("DISCORD_ALLOWED_CHANNELS", ""),
             discord_allowed_roles=os.getenv("DISCORD_ALLOWED_ROLES", ""),
             discord_max_messages=int(os.getenv("DISCORD_MAX_MESSAGES", "25")),
@@ -185,9 +187,7 @@ class ClarissaConfig:
             discord_monitor_enabled=os.getenv("DISCORD_MONITOR_ENABLED", "true").lower()
             == "true",
             # Docker sandbox
-            docker_sandbox_image=os.getenv(
-                "DOCKER_SANDBOX_IMAGE", "python:3.12-slim"
-            ),
+            docker_sandbox_image=os.getenv("DOCKER_SANDBOX_IMAGE", "python:3.12-slim"),
             docker_sandbox_timeout=int(os.getenv("DOCKER_SANDBOX_TIMEOUT", "900")),
             docker_sandbox_memory=os.getenv("DOCKER_SANDBOX_MEMORY", "512m"),
             docker_sandbox_cpu=float(os.getenv("DOCKER_SANDBOX_CPU", "1.0")),
@@ -195,14 +195,14 @@ class ClarissaConfig:
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
             # Local file storage
             clarissa_files_dir=os.getenv("CLARISSA_FILES_DIR", "./clarissa_files"),
-            clara_max_file_size=int(
+            clarissa_max_file_size=int(
                 os.getenv("CLARISSA_MAX_FILE_SIZE", str(50 * 1024 * 1024))
             ),
             # Email
-            clara_email_address=os.getenv("CLARISSA_EMAIL_ADDRESS", ""),
-            clara_email_password=os.getenv("CLARISSA_EMAIL_PASSWORD", ""),
-            clara_email_notify_user=os.getenv("CLARISSA_EMAIL_NOTIFY_USER", ""),
-            clara_email_notify=os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower()
+            clarissa_email_address=os.getenv("CLARISSA_EMAIL_ADDRESS", ""),
+            clarissa_email_password=os.getenv("CLARISSA_EMAIL_PASSWORD", ""),
+            clarissa_email_notify_user=os.getenv("CLARISSA_EMAIL_NOTIFY_USER", ""),
+            clarissa_email_notify=os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower()
             == "true",
         )
 

@@ -20,7 +20,7 @@ Claude Desktop Configuration:
     Add to your claude_desktop_config.json:
     {
         "mcpServers": {
-            "clara": {
+            "clarissa": {
                 "command": "python",
                 "args": ["/path/to/mypalclarissa/mcp_server.py"]
             }
