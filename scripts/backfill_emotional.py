@@ -447,10 +447,14 @@ def backfill_user_emotional_context(
 
         logger.info(f"  Created {stats['emotional_entries_created']} entries")
 
-    except ImportError:
-        logger.warning("emotional_context module not available, skipping storage")
+    except ImportError as e:
+        logger.warning(f"emotional_context module not available: {e}")
+        import traceback
+        logger.debug(traceback.format_exc())
     except Exception as e:
         logger.error(f"Failed to store emotional context: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
         stats["errors"] += 1
 
     return stats
@@ -490,7 +494,44 @@ def main():
         type=Path,
         help="Alias for --discord-export (backwards compatibility)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug logging",
+    )
+    parser.add_argument(
+        "--check-imports",
+        action="store_true",
+        help="Check if all required modules can be imported",
+    )
     args = parser.parse_args()
+
+    # Set debug logging if requested
+    if args.debug:
+        import logging
+        logging.getLogger("backfill_emotional").setLevel(logging.DEBUG)
+
+    # Check imports if requested
+    if args.check_imports:
+        logger.info("Checking imports...")
+        try:
+            from clarissa_core.emotional_context import (
+                track_message_sentiment,  # noqa: F401
+            )
+            logger.info("  emotional_context: OK")
+        except Exception as e:
+            logger.error(f"  emotional_context: FAILED - {e}")
+        try:
+            from clarissa_core.sentiment import analyze_sentiment  # noqa: F401
+            logger.info("  sentiment: OK")
+        except Exception as e:
+            logger.error(f"  sentiment: FAILED - {e}")
+        try:
+            from db import SessionLocal  # noqa: F401
+            logger.info("  db: OK")
+        except Exception as e:
+            logger.error(f"  db: FAILED - {e}")
+        return
 
     # Handle --logs as alias for --discord-export
     discord_export_path = args.discord_export or args.logs
