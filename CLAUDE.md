@@ -4,36 +4,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-MyPalClarissa is a personal AI assistant with session management and persistent memory (via mem0). The assistant's name is Clarissa. It uses a FastAPI backend with SQLite/PostgreSQL storage and a Next.js frontend built with assistant-ui.
+MyPalClara is a personal AI assistant with session management and persistent memory (via mem0). The assistant's name is Clara. It uses a Discord bot interface with SQLite/PostgreSQL storage.
 
 ## Development Commands
 
-### Backend (Python/FastAPI)
+### Backend (Python)
 ```bash
 poetry install                    # Install dependencies
-poetry run python api.py          # Run API server (port 8000)
-poetry run python app.py          # Run Gradio UI (port 7860)
 poetry run python discord_bot.py  # Run Discord bot
 poetry run ruff check .           # Lint
 poetry run ruff format .          # Format
-```
 
-### Frontend (Next.js)
-```bash
-cd frontend
-npm install                       # Install dependencies
-npm run dev                       # Run dev server (port 3000, uses Turbopack)
-npm run build                     # Production build
-npm run lint                      # ESLint
-npm run prettier:fix              # Format with Prettier
+# Daemon mode (Unix only)
+poetry run python discord_bot.py --daemon                    # Run in background
+poetry run python discord_bot.py --daemon --logfile bot.log  # With log file
+poetry run python discord_bot.py --status                    # Check if running
+poetry run python discord_bot.py --stop                      # Stop daemon
 ```
 
 ### Docker
 ```bash
-docker-compose --profile full up           # Run backend + frontend
-docker-compose --profile discord up        # Run Discord bot only
-docker-compose --profile postgres up       # Run PostgreSQL databases only
-docker-compose --profile discord --profile postgres up  # Discord bot + databases
+docker-compose --profile discord up                    # Run Discord bot only
+docker-compose --profile discord --profile postgres up # Discord bot + databases
 ```
 
 ### Memory Management
@@ -50,30 +42,31 @@ poetry run python clear_dbs.py --user <id> # Clear specific user
 
 ## Architecture
 
-### Backend Structure
-- `api.py` - FastAPI server with thread management, chat, and memory endpoints
+### Core Structure
 - `discord_bot.py` - Discord bot with multi-user support, reply chains, and streaming responses
 - `discord_monitor.py` - Web dashboard for monitoring Discord bot status and activity
-- `memory_manager.py` - Core orchestrator: session handling, mem0 integration, prompt building with Clarissa's persona
-- `clarissa_core/llm.py` - LLM provider abstraction (OpenRouter, NanoGPT, custom OpenAI, Anthropic) - both streaming and non-streaming
+- `memory_manager.py` - Core orchestrator: session handling, mem0 integration, prompt building with Clara's persona
+- `llm_backends.py` - LLM provider abstraction (OpenRouter, NanoGPT, custom OpenAI, native Anthropic) - both streaming and non-streaming
 - `mem0_config.py` - mem0 memory system configuration (Qdrant/pgvector for vectors, OpenAI embeddings)
 - `models.py` - SQLAlchemy models: Project, Session, Message, ChannelSummary
 - `db.py` - Database setup (SQLite for dev, PostgreSQL for production)
-- `docker_tools.py` - Docker sandbox for code execution (used by Discord bot tool calling)
-- `local_files.py` - Local file storage system for persistent user files
 - `email_monitor.py` - Email monitoring and auto-response system
 
-### Frontend Structure
-- `frontend/app/api/chat/route.ts` - Next.js API route that fetches context from backend, streams LLM response via AI SDK
-- `frontend/lib/thread-adapter.ts` - RemoteThreadListAdapter and ThreadHistoryAdapter for assistant-ui thread management
-- `frontend/components/assistant-ui/` - Chat UI components built on assistant-ui
-- `frontend/app/assistant.tsx` - Main assistant component with runtime provider and adapters
+### Sandbox System
+- `sandbox/docker.py` - Local Docker sandbox for code execution
+- `sandbox/remote_client.py` - Remote VPS sandbox client
+- `sandbox/manager.py` - Unified sandbox manager (auto-selects local or remote)
 
-### Data Flow
-1. Frontend sends chat request to `/api/chat` route with messages
-2. Route fetches enriched context from backend `/api/context` (includes mem0 memories, session context, Clarissa persona)
-3. Route streams LLM response directly to frontend using AI SDK's `streamText`
-4. On completion, stores messages via backend `/api/store` (triggers mem0 memory extraction)
+### Storage
+- `storage/local_files.py` - Local file storage system for persistent user files
+
+### MCP Plugin System
+- `clarissa_core/mcp/client.py` - MCPClient wrapper for connecting to MCP servers (stdio & HTTP transports)
+- `clarissa_core/mcp/manager.py` - MCPServerManager singleton for managing all server connections
+- `clarissa_core/mcp/installer.py` - Installation from Smithery, npm, GitHub, Docker, or local paths
+- `clarissa_core/mcp/registry_adapter.py` - Bridge between MCP tools and Clara's ToolRegistry
+- `clarissa_core/mcp/models.py` - MCPServer SQLAlchemy model for configuration storage
+- `tools/mcp_management.py` - User-facing management tools (mcp_install, mcp_list, etc.)
 
 ### Memory System
 - **User memories**: Persistent facts/preferences per user (stored in mem0, searched via `_fetch_mem0_context`)
@@ -82,12 +75,6 @@ poetry run python clear_dbs.py --user <id> # Clear specific user
 - **Session context**: Recent 20 messages + snapshot of last 10 messages from previous session
 - **Session summary**: LLM-generated summary stored when session times out
 - Sessions auto-timeout after 30 minutes of inactivity (`SESSION_IDLE_MINUTES`)
-
-### Thread Management
-Backend provides full CRUD for threads via `/api/threads` endpoints:
-- List, create, rename, archive, unarchive, delete threads
-- Get/append messages per thread
-- Generate titles via LLM (`/api/threads/{id}/generate-title`)
 
 ## Environment Variables
 
@@ -112,10 +99,11 @@ Backend provides full CRUD for threads via `/api/threads` endpoints:
 - `CUSTOM_OPENAI_MODEL` - Chat model (default: gpt-4o)
 
 **Anthropic** (`LLM_PROVIDER=anthropic`):
-- `ANTHROPIC_API_KEY` - API key for Anthropic
-- `ANTHROPIC_BASE_URL` - Optional: custom base URL for proxies (e.g., clewdr)
-- `ANTHROPIC_MODEL` - Chat model (default: claude-sonnet-4-20250514)
-- `CF_ACCESS_CLIENT_ID` / `CF_ACCESS_CLIENT_SECRET` - Optional: Cloudflare Access headers for tunnels
+- `ANTHROPIC_API_KEY` - Anthropic API key
+- `ANTHROPIC_BASE_URL` - Custom base URL for proxies like clewdr (optional)
+- `ANTHROPIC_MODEL` - Chat model (default: claude-sonnet-4-5)
+
+Uses native Anthropic SDK with native tool calling. Recommended for Claude proxies like clewdr.
 
 ### Model Tiers (Discord Bot)
 The Discord bot supports dynamic model selection via message prefixes:
@@ -128,20 +116,35 @@ Optional tier-specific model overrides:
 - `NANOGPT_MODEL_HIGH`, `NANOGPT_MODEL_MID`, `NANOGPT_MODEL_LOW`
 - `CUSTOM_OPENAI_MODEL_HIGH`, `CUSTOM_OPENAI_MODEL_MID`, `CUSTOM_OPENAI_MODEL_LOW`
 - `ANTHROPIC_MODEL_HIGH`, `ANTHROPIC_MODEL_MID`, `ANTHROPIC_MODEL_LOW`
-- `MODEL_TIER` - Default tier when not specified (default: "mid")
+- `MODEL_TIER` - Default tier when not specified. If not set, uses the base model (e.g., `ANTHROPIC_MODEL`). Set to "high", "mid", or "low" to enable tier-based defaults.
+- `AUTO_TIER_SELECTION` - Enable automatic tier selection based on message complexity (default: false)
+
+**Auto Tier Selection:**
+When `AUTO_TIER_SELECTION=true`, Clara uses the fast/low model to classify message complexity and automatically selects the appropriate tier:
+- LOW = Simple greetings, quick facts, basic questions, casual chat
+- MID = Moderate tasks, explanations, summaries, most coding questions
+- HIGH = Complex reasoning, long-form writing, difficult coding, multi-step analysis
+
+The classifier considers recent conversation history (up to 4 messages) when making its decision. This prevents short replies like "yes" or "ok" from dropping to a lower tier when they're part of a complex ongoing discussion.
 
 Example usage in Discord: `!high What is quantum entanglement?`
 
+### Cloudflare Access (for endpoints behind cloudflared)
+For custom OpenAI endpoints behind Cloudflare Access (like cloudflared tunnels):
+- `CF_ACCESS_CLIENT_ID` - Cloudflare Access Service Token client ID
+- `CF_ACCESS_CLIENT_SECRET` - Cloudflare Access Service Token client secret
+
 ### Mem0 Provider (independent from chat LLM)
-- `MEM0_PROVIDER` - Provider for memory extraction: "openrouter" (default), "nanogpt", or "openai"
+- `MEM0_PROVIDER` - Provider for memory extraction: "openrouter" (default), "nanogpt", "openai", or "anthropic"
 - `MEM0_MODEL` - Model for memory extraction (default: openai/gpt-4o-mini)
 - `MEM0_API_KEY` - Optional: override the provider's default API key
 - `MEM0_BASE_URL` - Optional: override the provider's default base URL
 
+Note: For `MEM0_PROVIDER=anthropic`, uses native Anthropic SDK with `anthropic_base_url` support for proxies.
+
 ### Optional
 - `USER_ID` - Single-user identifier (default: "demo-user")
 - `DEFAULT_PROJECT` - Default project name (default: "Default Project")
-- `BACKEND_URL` - Backend URL for frontend (default: http://localhost:8000)
 - `SKIP_PROFILE_LOAD` - Skip initial mem0 profile loading (default: true)
 - `ENABLE_GRAPH_MEMORY` - Enable graph memory for relationship tracking (default: false)
 - `GRAPH_STORE_PROVIDER` - Graph store provider: "neo4j" (default) or "kuzu" (embedded)
@@ -154,8 +157,8 @@ For production, use managed PostgreSQL instead of SQLite/Qdrant:
 
 Example (Railway):
 ```bash
-DATABASE_URL=postgresql://user:pass@host:5432/clarissa_main
-MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clarissa_vectors
+DATABASE_URL=postgresql://user:pass@host:5432/clara_main
+MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clara_vectors
 ```
 
 To migrate existing data:
@@ -166,42 +169,123 @@ poetry run python scripts/migrate_to_postgres.py --all
 ### Discord Bot
 - `DISCORD_BOT_TOKEN` - Discord bot token (required for Discord integration)
 - `DISCORD_CLIENT_ID` - Client ID for invite link generation
+- `DISCORD_ALLOWED_SERVERS` - Comma-separated server IDs to whitelist all channels (optional, supersedes channel list)
 - `DISCORD_ALLOWED_CHANNELS` - Comma-separated channel IDs to restrict bot (optional)
 - `DISCORD_ALLOWED_ROLES` - Comma-separated role IDs for access control (optional)
 - `DISCORD_MAX_MESSAGES` - Max messages in conversation chain (default: 25)
+- `DISCORD_STOP_PHRASES` - Comma-separated phrases that interrupt running tasks (default: "clara stop,stop clara,nevermind,never mind")
 - `DISCORD_SUMMARY_AGE_MINUTES` - Messages older than this are summarized (default: 30)
 - `DISCORD_CHANNEL_HISTORY_LIMIT` - Max messages to fetch from channel (default: 50)
 - `DISCORD_MONITOR_PORT` - Monitor dashboard port (default: 8001)
 - `DISCORD_MONITOR_ENABLED` - Enable monitor dashboard (default: true)
+- `DISCORD_LOG_CHANNEL_ID` - Channel ID to mirror console logs to (optional)
 
-### Docker Code Execution (Discord Bot)
-Tool calling requires Docker and a tool-capable LLM:
+**Console Log Mirroring:**
+When `DISCORD_LOG_CHANNEL_ID` is set, all console log output is mirrored to the specified Discord channel. Each log line becomes a separate message. Special events are highlighted:
+- 🟢 Bot started
+- 🔴 Bot shutting down
+- 🟡 Bot disconnected
+- 🔄 Bot reconnected/resumed
+
+**Stop Phrases:**
+Users can interrupt Clara mid-task by sending a stop phrase (e.g., "@Clara stop" or "@Clara nevermind"). This immediately cancels the current task and clears any queued requests for that channel. Useful when Clara is taking too long or working on the wrong thing.
+
+**Message Queuing (Active Mode Batching):**
+When Clara is busy processing a message, incoming messages are queued. The queuing behavior differs based on message type:
+
+- **DMs and Mentions:** Each message is processed individually with queue position notifications. Users see "-# ⏳ Your request is queued (position N)" and "-# ▶️ Starting your queued request (waited Xs)..." when it's their turn.
+
+- **Active Mode (Channel):** Messages in active mode channels (where Clara responds to all messages without needing mentions) are batched together. When chat gets very active:
+  1. Incoming messages get an ⏳ reaction instead of a reply notification (less noise)
+  2. When Clara finishes her current task, she collects all consecutive queued active-mode messages
+  3. She responds to them together in a single combined response, prefixed with "-# 📨 Catching up on N messages"
+  4. The combined context shows each message with its author: `[Username]: message content`
+
+This allows Clara to keep up with fast-moving conversations without flooding the channel with individual responses or queue notifications.
+
+**Image/Vision Support:**
+Clara can see and analyze images sent in Discord messages. When a user sends an image (PNG, JPG, JPEG, GIF, or WebP), Clara will process it and include it in the LLM context for vision-capable models.
+
+Configuration:
+- `DISCORD_MAX_IMAGE_SIZE` - Maximum image file size in bytes (default: 4194304 = 4MB)
+
+Supported formats: `.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`
+
+How it works:
+1. Images are automatically detected from Discord attachments
+2. Images within size limits are base64-encoded and included in the LLM message
+3. The image format is converted appropriately for each LLM provider:
+   - OpenRouter/OpenAI: Uses `image_url` format with data URLs
+   - Anthropic (native): Converts to Anthropic's `image` source format with base64 data
+4. Images are also saved to local storage for later reference
+
+Note: Vision capabilities depend on the model being used. Most modern Claude and GPT-4 Vision models support image analysis. The 4MB default limit accounts for base64 encoding overhead (~33%) which increases the actual request size. Larger images will be saved locally but not sent to the LLM.
+
+### Sandbox Code Execution
+
+Clara supports code execution via local Docker or a remote self-hosted sandbox service.
+
+**Mode Selection:**
+- `SANDBOX_MODE` - Backend selection: "local", "remote", or "auto" (default: auto)
+  - `local`: Use local Docker containers only
+  - `remote`: Use remote sandbox API only
+  - `auto`: Use remote if configured, fall back to local Docker
+
+**Local Docker** (`SANDBOX_MODE=local` or fallback):
 - `DOCKER_SANDBOX_IMAGE` - Docker image for sandbox (default: python:3.12-slim)
 - `DOCKER_SANDBOX_TIMEOUT` - Container idle timeout in seconds (default: 900)
 - `DOCKER_SANDBOX_MEMORY` - Memory limit per container (default: 512m)
 - `DOCKER_SANDBOX_CPU` - CPU limit per container (default: 1.0)
-- `TAVILY_API_KEY` - Tavily API key for web search (optional but recommended)
 
-### Playwright Browser Automation (Discord Bot)
-Playwright enables web browsing, screenshots, and page scraping tools. Disabled by default to reduce Docker build time.
-- `PLAYWRIGHT_ENABLED` - Enable Playwright tools (default: false)
+**Remote Sandbox** (`SANDBOX_MODE=remote` or auto with config):
+- `SANDBOX_API_URL` - Remote sandbox service URL (e.g., https://sandbox.example.com)
+- `SANDBOX_API_KEY` - API key for authentication
+- `SANDBOX_TIMEOUT` - Request timeout in seconds (default: 60)
 
-To enable, set in `.env` before building:
+The self-hosted sandbox service is in `sandbox_service/`. Deploy to a VPS with Docker:
 ```bash
-PLAYWRIGHT_ENABLED=true
-docker-compose --profile discord build --no-cache
+cd sandbox_service
+docker-compose build sandbox-image  # Build sandbox container image
+docker-compose up -d                # Start API service
 ```
+
+**Web Search:**
+- `TAVILY_API_KEY` - Tavily API key for web search (optional but recommended)
 
 ### Tool Calling LLM
 By default, tool calling uses the **same endpoint and model as your main chat LLM**. This means if you're using a custom endpoint (like clewdr), tool calls go through it too.
 
+**Tool tier minimum**: Tool calls never use the "low" tier (e.g., Haiku). When a message triggers the "low" tier, tool calls automatically use the base model instead (e.g., `CUSTOM_OPENAI_MODEL`). This ensures tools always have sufficient capability for complex operations.
+
+Example configuration:
+```bash
+CUSTOM_OPENAI_MODEL="claude-sonnet-4-5"       # Base model (used for tools when tier=low)
+CUSTOM_OPENAI_MODEL_HIGH="claude-opus-4-5"   # High tier
+CUSTOM_OPENAI_MODEL_MID="claude-sonnet-4-5"  # Mid tier
+CUSTOM_OPENAI_MODEL_LOW="claude-haiku-4-5"   # Low tier (chat only, not for tools)
+```
+
 Optional overrides:
 - `TOOL_API_KEY` - Override API key for tool calls
 - `TOOL_BASE_URL` - Override base URL for tool calls
-- `TOOL_MODEL` - Override model for tool calls
-- `TOOL_FORMAT` - Tool definition format: `openai` (default) or `claude`
 
-**For Claude proxies (like clewdr)**: Set `TOOL_FORMAT=claude` to convert tool definitions to Claude's format.
+**Tool Status Descriptions:**
+When Clara executes tools, she displays status messages in Discord. These descriptions are generated using an LLM to provide rich context.
+
+- `TOOL_DESC_TIER` - Model tier for generating descriptions: "high" (default, Opus-class), "mid" (Sonnet-class), or "low" (Haiku-class)
+- `TOOL_DESC_MAX_WORDS` - Maximum words in descriptions (default: 20)
+
+Example output with high tier:
+```
+-# 🐍 Running Python code... (step 1)
+-# ↳ *Analyzing the uploaded CSV file to compute summary statistics and identify missing values*
+```
+
+**For Claude proxies (like clewdr)**: Use `LLM_PROVIDER=anthropic` with `ANTHROPIC_BASE_URL` for native Anthropic SDK support. This uses native Claude tool calling without format conversion.
+
+### Deprecated
+- `TOOL_FORMAT` - No longer needed. Use `LLM_PROVIDER=anthropic` for native Claude tool calling.
+- `TOOL_MODEL` - No longer used. Tool calls use tier-based model selection, with "low" tier bumped to base model.
 
 To enable Docker sandbox + web search:
 ```bash
@@ -213,9 +297,9 @@ export TAVILY_API_KEY="your-tavily-key"
 ```
 
 ### Local File Storage (Discord Bot)
-Clarissa can save files locally that persist across sessions:
-- `CLARISSA_FILES_DIR` - Directory for local file storage (default: ./clarissa_files)
-- `CLARISSA_MAX_FILE_SIZE` - Max file size in bytes (default: 50MB)
+Clara can save files locally that persist across sessions:
+- `CLARA_FILES_DIR` - Directory for local file storage (default: ./clara_files)
+- `CLARA_MAX_FILE_SIZE` - Max file size in bytes (default: 50MB)
 
 Files are organized per-user. Discord attachments are automatically saved locally.
 
@@ -228,25 +312,8 @@ Files are organized per-user. Discord attachments are automatically saved locall
 - `upload_to_sandbox` - Upload local file to Docker sandbox
 - `send_local_file` - Send a saved file to Discord chat
 
-### Task Planning (Discord Bot)
-Clarissa can maintain persistent working memory for complex tasks using markdown files.
-Inspired by [Manus AI's Planning with Files](https://github.com/OthmanAdi/planning-with-files).
-
-- `PLANNING_FILES_ENABLED` - Enable planning tools (default: true)
-
-**Planning Tools:**
-- `create_task_plan` - Create a new plan with goals and phases
-- `get_current_plan` - Read the active task plan
-- `update_plan` - Update a section (goals, phases, decisions, blockers, notes)
-- `add_finding` - Record research findings (follow 2-action rule)
-- `get_findings` - Read all findings
-- `log_progress` - Log actions and results
-- `get_progress` - Read the progress log
-- `complete_task` - Mark task complete and archive
-- `list_plans` - List active and archived plans
-
 ### GitHub Integration (Discord Bot)
-Clarissa can interact with GitHub repositories, issues, PRs, and workflows:
+Clara can interact with GitHub repositories, issues, PRs, and workflows:
 - `GITHUB_TOKEN` - GitHub Personal Access Token (required for GitHub tools)
 
 **GitHub Tools** (requires GITHUB_TOKEN):
@@ -262,7 +329,7 @@ Clarissa can interact with GitHub repositories, issues, PRs, and workflows:
 - And many more (search users, branches, releases, tags, notifications, stars)
 
 ### Azure DevOps Integration (Discord Bot)
-Clarissa can interact with Azure DevOps projects, repos, work items, and pipelines:
+Clara can interact with Azure DevOps projects, repos, work items, and pipelines:
 - `AZURE_DEVOPS_ORG` - Azure DevOps organization name or URL (required)
 - `AZURE_DEVOPS_PAT` - Azure DevOps Personal Access Token (required)
 
@@ -276,60 +343,306 @@ Clarissa can interact with Azure DevOps projects, repos, work items, and pipelin
 - `ado_search_code` - Search code across repos
 - `ado_list_iterations` / `ado_list_team_iterations` - View sprints/iterations
 
+### Google Workspace Integration (Discord Bot)
+Clara can interact with Google Sheets, Drive, Docs, and Calendar using per-user OAuth 2.0:
+- `GOOGLE_CLIENT_ID` - OAuth 2.0 client ID from Google Cloud Console
+- `GOOGLE_CLIENT_SECRET` - OAuth 2.0 client secret
+- `GOOGLE_REDIRECT_URI` - Callback URL (e.g., https://your-api.up.railway.app/oauth/google/callback)
+- `CLARA_API_URL` - API service URL for OAuth redirects (e.g., https://your-api.up.railway.app)
+
+**Connection Tools** (users must connect before using other tools):
+- `google_connect` - Generate OAuth URL to connect Google account
+- `google_status` - Check if Google account is connected
+- `google_disconnect` - Disconnect Google account
+
+**Google Sheets Tools:**
+- `google_sheets_create` - Create a new spreadsheet
+- `google_sheets_read` - Read data from a range (A1 notation)
+- `google_sheets_write` - Write data to a range
+- `google_sheets_append` - Append rows to a sheet
+- `google_sheets_list` - List user's spreadsheets
+
+**Google Drive Tools:**
+- `google_drive_list` - List files with optional query
+- `google_drive_upload` - Upload text content as a file
+- `google_drive_download` - Download file content
+- `google_drive_create_folder` - Create a folder
+- `google_drive_share` - Share a file with someone
+
+**Google Docs Tools:**
+- `google_docs_create` - Create a new document
+- `google_docs_read` - Read document content
+- `google_docs_write` - Append text to a document
+
+**Google Calendar Tools:**
+- `google_calendar_list_events` - List upcoming events (with filters)
+- `google_calendar_get_event` - Get specific event details
+- `google_calendar_create_event` - Create a new event
+- `google_calendar_update_event` - Modify an existing event
+- `google_calendar_delete_event` - Delete an event
+- `google_calendar_list_calendars` - List available calendars
+
+**Setup:**
+1. Create OAuth 2.0 credentials in Google Cloud Console
+2. Enable Google Sheets, Drive, Docs, Calendar, and Gmail APIs
+3. Deploy the API service (see below) and add its URL to "Authorized redirect URIs": `https://your-api.up.railway.app/oauth/google/callback`
+4. Set the environment variables on both the Discord bot and API service
+
+### Email Monitoring Service (Discord Bot)
+Clara can monitor user email accounts and send Discord alerts for important messages.
+
+**Environment Variables:**
+- `EMAIL_MONITORING_ENABLED` - Enable the email monitoring service (default: false)
+- `EMAIL_ENCRYPTION_KEY` - Fernet key for encrypting IMAP passwords (required for IMAP accounts)
+- `EMAIL_DEFAULT_POLL_INTERVAL` - Default polling interval in minutes (default: 5)
+
+Generate encryption key: `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+
+**Account Management Tools:**
+- `email_connect_gmail` - Connect Gmail (uses existing Google OAuth)
+- `email_connect_imap` - Connect IMAP account (iCloud, Outlook, etc.)
+- `email_list_accounts` - List connected accounts
+- `email_disconnect` - Remove an account
+
+**Configuration Tools:**
+- `email_set_alert_channel` - Set Discord channel for alerts
+- `email_set_quiet_hours` - Configure quiet hours (no alerts)
+- `email_toggle_ping` - Enable/disable @mentions
+
+**Rules Tools:**
+- `email_apply_preset` - Apply built-in preset (job_hunting, urgent, security, financial, shipping)
+- `email_list_presets` - List available presets
+- `email_add_rule` - Create custom rule
+- `email_list_rules` - List configured rules
+- `email_remove_rule` - Remove a rule
+
+**Status Tools:**
+- `email_status` - Check monitoring status
+- `email_recent_alerts` - View recent alerts
+
+**Built-in Presets:**
+- `job_hunting` - Recruiter emails, ATS platforms (Greenhouse, Lever, Workday), job keywords
+- `urgent` - Emails with urgent/ASAP keywords
+- `security` - Password resets, 2FA codes, security alerts
+- `financial` - Banking, payment notifications
+- `shipping` - Package tracking, delivery updates
+
+**Database Tables:**
+- `email_accounts` - User email connections (Gmail OAuth or encrypted IMAP)
+- `email_rules` - Per-user importance rules
+- `email_alerts` - Alert history for deduplication
+
+### API Service (OAuth & Endpoints)
+
+Standalone FastAPI service for OAuth callbacks and API endpoints. Runs separately from the Discord bot.
+
+**Location:** `api_service/`
+
+**Environment Variables:**
+- `DATABASE_URL` - PostgreSQL connection string (same as Discord bot)
+- `GOOGLE_CLIENT_ID` - Google OAuth client ID
+- `GOOGLE_CLIENT_SECRET` - Google OAuth client secret
+- `GOOGLE_REDIRECT_URI` - OAuth callback URL (e.g., https://your-api.up.railway.app/oauth/google/callback)
+
+**Endpoints:**
+- `GET /health` - Health check
+- `GET /oauth/google/authorize/{user_id}` - Get OAuth authorization URL (JSON)
+- `GET /oauth/google/start/{user_id}` - Redirect to Google OAuth (for Discord buttons)
+- `GET /oauth/google/callback` - OAuth callback handler
+- `GET /oauth/google/status/{user_id}` - Check connection status
+- `POST /oauth/google/disconnect/{user_id}` - Disconnect account
+
+**Railway Deployment:**
+1. Create new service from `api_service/` directory
+2. Set root directory to `api_service`
+3. Enable public networking and note the domain
+4. Set environment variables
+5. Update `GOOGLE_REDIRECT_URI` on both services to use the API service URL
+
+### Release Dashboard
+
+Standalone FastAPI service for tracking releases across stage/main and triggering deployment workflows.
+
+**Location:** `release_dashboard/`
+
+**Environment Variables:**
+- `DATABASE_URL` - PostgreSQL connection string (shared with main app)
+- `GITHUB_CLIENT_ID` - GitHub OAuth App client ID
+- `GITHUB_CLIENT_SECRET` - GitHub OAuth App client secret
+- `GITHUB_REDIRECT_URI` - OAuth callback URL (e.g., https://release.up.railway.app/oauth/callback)
+- `GITHUB_REPO_OWNER` - Repository owner (e.g., "BangRocket")
+- `GITHUB_REPO_NAME` - Repository name (e.g., "mypalclara")
+- `SESSION_SECRET` - Cookie signing secret (auto-generated if not set)
+- `WORKFLOW_DEPLOY` - Workflow filename (default: "promote-to-main.yml")
+
+**Features:**
+- GitHub OAuth with collaborator check (only repo collaborators can access)
+- Two-column view showing stage (development) and main (production)
+- Commit diffs showing what's pending deployment from stage to main
+- One-click deploy button to trigger the deployment workflow
+- Creates release tags on successful deployment (format: `v{YYYY.MM.DD}-{sha}`)
+- Deployment timeline with status, who triggered, and release tags
+
+**Endpoints:**
+- `GET /` - Main dashboard (requires auth)
+- `GET /health` - Health check
+- `GET /login` - Redirect to GitHub OAuth
+- `GET /oauth/callback` - OAuth callback handler
+- `GET /logout` - Clear session
+- `POST /api/deploy` - Trigger stage to main deployment
+
+**Railway Deployment:**
+1. Create new service from `release_dashboard/` directory
+2. Set root directory to `release_dashboard`
+3. Enable public networking and note the domain
+4. Create a GitHub OAuth App at https://github.com/settings/developers
+5. Set environment variables including `GITHUB_REDIRECT_URI` to the Railway domain + `/oauth/callback`
+
+### Claude Code Integration (Discord Bot)
+Clara can delegate complex coding tasks to Claude Code, an autonomous AI coding agent.
+
+**Authentication (one of these):**
+- Claude Max/Pro subscription: Login via `claude login` in terminal (no API key needed)
+- `ANTHROPIC_API_KEY` - Anthropic API key for API-based authentication
+
+**Optional Configuration:**
+- `CLAUDE_CODE_WORKDIR` - Default working directory for coding tasks
+- `CLAUDE_CODE_MAX_TURNS` - Maximum agent steps per task (default: 10)
+
+**Claude Code Tools:**
+- `claude_code` - Execute coding tasks autonomously (read/write files, run commands, etc.)
+- `claude_code_status` - Check availability and authentication method
+- `claude_code_set_workdir` - Set the working directory for coding tasks
+- `claude_code_get_workdir` - Get the current working directory
+
+**Capabilities:**
+- Read and write files within the working directory
+- Execute shell commands (bash, python, npm, git, etc.)
+- Search code with glob and grep patterns
+- Multi-step, agentic workflows with automatic file editing
+
+**Example Usage in Discord:**
+```
+@Clara Check Claude Code status
+@Clara Use Claude Code to add error handling to src/api/users.py
+@Clara claude_code: Write unit tests for the utils module in /path/to/project
+```
+
+### MCP Plugin System (Discord Bot)
+Clara can install and use tools from external MCP (Model Context Protocol) servers, similar to Claude Code's `/plugins` command.
+
+**How It Works:**
+- MCP servers are installed from Smithery registry, npm, GitHub, Docker, or local paths
+- Server configurations are stored in SQLite/PostgreSQL (`mcp_servers` table)
+- Cloned repos and built servers are stored in `MCP_SERVERS_DIR` (default: `.mcp_servers/`)
+- Tools from all connected servers are automatically registered with Clara
+- Tools use namespaced names: `{server_name}__{tool_name}` (e.g., `everything__echo`)
+
+**Environment Variables:**
+- `MCP_SERVERS_DIR` - Directory for cloned repos and built servers (default: `.mcp_servers`)
+- `SMITHERY_API_TOKEN` - Optional Smithery API token for authenticated registry searches
+
+**Docker Configuration:**
+- MCP servers directory is mounted as a bind mount for external access
+- Set `MCP_SERVERS_PATH` to customize the host path (default: `./mcp_servers`)
+- Inside container, files are at `/app/mcp_servers`
+
+**Installation Sources:**
+- **Smithery registry**: `smithery:e2b`, `smithery:@anthropic/mcp-server-fetch`
+- **npm packages**: `@modelcontextprotocol/server-everything`
+- **GitHub repos**: `github.com/user/mcp-server`
+- **Docker images**: `ghcr.io/user/mcp-server:latest`
+- **Local paths**: `/path/to/mcp-server`
+
+**Management Tools:**
+- `smithery_search` - Search Smithery registry for available MCP servers
+- `mcp_install` - Install an MCP server from various sources
+- `mcp_uninstall` - Remove an installed server
+- `mcp_list` - List all installed servers and their tools
+- `mcp_enable` / `mcp_disable` - Toggle servers without uninstalling
+- `mcp_restart` - Restart a running server
+- `mcp_status` - Get detailed status of servers
+
+**Permissions (Discord):**
+Admin operations require one of:
+- Administrator permission
+- Manage Channels permission
+- Clara-Admin role
+
+**Example Usage in Discord:**
+```
+@Clara search smithery for file system servers
+@Clara install the MCP server smithery:e2b
+@Clara install the MCP server @modelcontextprotocol/server-everything
+@Clara list MCP servers
+@Clara use everything__echo to echo "Hello World"
+```
+
+**Discord Slash Commands:**
+- `/mcp search <query>` - Search Smithery registry
+- `/mcp install <source>` - Install a server (admin only)
+- `/mcp list` - List installed servers
+- `/mcp status <server>` - Get server status
+- `/mcp tools [server]` - List tools
+- `/mcp enable/disable <server>` - Toggle servers
+- `/mcp uninstall <server>` - Remove a server (admin only)
+
+**Dependencies:**
+- `mcp` - Official MCP Python SDK
+- `gitpython` - For cloning GitHub repos
+
+### Organic Response System (ORS) - Proactive Conversations
+Clara can initiate conversations without user prompting when there's genuine reason to reach out.
+
+**Philosophy:** Reach out when there's genuine reason - not on a schedule. Feel like a thoughtful friend who texts at the right moment, not because a timer went off.
+
+**Environment Variables:**
+- `ORS_ENABLED` or `PROACTIVE_ENABLED` - Enable ORS (default: false)
+- `ORS_BASE_INTERVAL_MINUTES` - Base check interval, adapts dynamically (default: 15)
+- `ORS_MIN_SPEAK_GAP_HOURS` - Minimum hours between proactive messages (default: 2)
+- `ORS_ACTIVE_DAYS` - Only check users active in last N days (default: 7)
+- `ORS_NOTE_DECAY_DAYS` - Days before note relevance decays to 0 (default: 7)
+- `ORS_IDLE_TIMEOUT_MINUTES` - Minutes before extracting conversation summary (default: 30)
+
+**State Machine:**
+```
+WAIT  ◄──► THINK ◄──► SPEAK
+  ▲                      │
+  └──────────────────────┘
+```
+
+- **WAIT** - No action needed. Stay quiet, but keep gathering context.
+- **THINK** - Something's brewing. Process and file an observation/note for later.
+- **SPEAK** - There's a clear reason to reach out now with purpose.
+
+**How it works:**
+1. Continuous loop with adaptive timing (not fixed polling)
+2. Gathers rich context: temporal, calendar, conversation, notes, patterns
+3. Situation assessment: What's going on with the user?
+4. Action decision: WAIT, THINK, or SPEAK based on assessment
+5. Adaptive timing: Next check in 5 min to 8 hours based on context
+6. Note system: Observations accumulate, connect, and decay over time
+
+**Context Sources:**
+- Temporal: Time of day, day of week, active hours, time since last interaction
+- Calendar: Upcoming events (if Google Calendar connected)
+- Conversation: Last interaction summary, energy level, open threads
+- Notes: Accumulated observations with relevance scoring
+- Patterns: Response rates, preferred times, explicit boundaries
+
+**Database Tables:**
+- `proactive_messages` - History of proactive messages sent
+- `proactive_assessments` - Situation assessments for continuity
+- `proactive_notes` - Internal observations with relevance decay
+- `user_interaction_patterns` - Learned patterns per user (enhanced)
+
 ## Key Patterns
 
-- Backend uses global `MemoryManager` instance initialized at startup with LLM callable
-- Frontend uses assistant-ui's `RemoteThreadListAdapter` and `ThreadHistoryAdapter` for thread persistence
-- All LLM backends use OpenAI-compatible API (OpenAI SDK on backend, AI SDK on frontend)
-- Thread adapter uses empty `BACKEND_URL` to leverage Next.js rewrites for CORS-free backend access
-
-## KIRA-Inspired Features
-
-MyPalClarissa includes features inspired by [KIRA](https://github.com/krafton-ai/KIRA) (Krafton's AI Virtual Coworker).
-
-### Auto Tier Selection
-Automatically selects model tier based on task complexity instead of requiring manual prefixes.
-- `AUTO_TIER_ENABLED=true` - Enable automatic tier selection (default: true)
-- `AUTO_TIER_SHOW_SELECTION=false` - Show auto-selected tier to user (default: false)
-
-Manual prefixes (`!high`, `!mid`, `!low`) always override automatic selection.
-
-Complexity indicators that trigger HIGH tier:
-- Code review/generation requests
-- Multi-step planning tasks
-- Creative writing
-- Complex reasoning keywords
-
-### Proactive Monitoring (Checkers)
-Background processes that monitor external services and notify users of updates.
-
-**Configuration:**
-```bash
-PROACTIVE_ENABLED=true          # Enable background checkers
-PROACTIVE_QUIET_START=22        # Quiet hours start (10pm)
-PROACTIVE_QUIET_END=8           # Quiet hours end (8am)
-```
-
-**Available Checkers:**
-
-| Checker | Env Prefix | Monitors |
-|---------|-----------|----------|
-| GitHub | `GITHUB_CHECKER_*` | PR reviews, notifications, CI failures |
-| Azure DevOps | `ADO_CHECKER_*` | Work items, PR reviews, build failures |
-| Email | `EMAIL_CHECKER_*` | New emails (uses existing email config) |
-
-Per-checker configuration:
-```bash
-GITHUB_CHECKER_ENABLED=true
-GITHUB_CHECKER_INTERVAL=15    # Minutes between checks
-```
-
-### Pipeline Architecture
-Messages flow through a multi-stage pipeline (in `clarissa_core/`):
-1. **Intent Detection** (`intent.py`) - Classify message type and complexity
-2. **Tier Selection** (`tier_selector.py`) - Choose optimal model tier
-3. **Execution** - Generate response with selected tier
-4. **Memory Extraction** - Store important facts (async)
+- Discord bot uses global `MemoryManager` instance initialized at startup with LLM callable
+- LLM backends support OpenAI-compatible API (via OpenAI SDK) and native Anthropic SDK
+- `LLM_PROVIDER=anthropic` uses native Anthropic SDK with native tool calling (recommended for clewdr)
+- Sandbox system auto-selects between local Docker and remote VPS based on configuration
+- mem0 is vendored locally (in `vendor/mem0/`) with fix for `anthropic_base_url` support
 
 ## Production Deployment
 
@@ -339,8 +652,8 @@ Set `DATABASE_URL` and `MEM0_DATABASE_URL` to use PostgreSQL instead of SQLite/Q
 
 ```bash
 # .env
-DATABASE_URL=postgresql://user:pass@localhost:5432/clarissa_main
-MEM0_DATABASE_URL=postgresql://user:pass@localhost:5432/clarissa_vectors
+DATABASE_URL=postgresql://user:pass@localhost:5432/clara_main
+MEM0_DATABASE_URL=postgresql://user:pass@localhost:5432/clara_vectors
 ```
 
 Enable pgvector on the vectors database:
@@ -348,13 +661,10 @@ Enable pgvector on the vectors database:
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### Docker Compose (full stack)
+### Docker Compose
 
 ```bash
-# Run backend + frontend + postgres databases
-docker-compose --profile full --profile postgres up
-
-# Run discord bot + postgres databases
+# Run Discord bot + postgres databases
 docker-compose --profile discord --profile postgres up
 ```
 
@@ -362,4 +672,51 @@ docker-compose --profile discord --profile postgres up
 
 ```bash
 poetry run python scripts/migrate_to_postgres.py --all
+```
+
+### Database Backup Service
+
+Automated backup service for Clara and Mem0 PostgreSQL databases to S3-compatible storage (Wasabi).
+
+**Location:** `backup_service/`
+
+**Environment Variables:**
+- `DATABASE_URL` - Clara PostgreSQL connection string
+- `MEM0_DATABASE_URL` - Mem0 PostgreSQL connection string
+- `S3_BUCKET` - S3 bucket name (default: clara-backups)
+- `S3_ENDPOINT_URL` - S3 endpoint (default: https://s3.wasabisys.com)
+- `S3_ACCESS_KEY` - S3 access key
+- `S3_SECRET_KEY` - S3 secret key
+- `S3_REGION` - S3 region (default: us-east-1)
+- `BACKUP_RETENTION_DAYS` - Days to keep backups (default: 7)
+- `RESPAWN_PROTECTION_HOURS` - Min hours between backups (default: 23)
+- `FORCE_BACKUP` - Set to "true" to bypass respawn protection
+- `DB_RETRY_ATTEMPTS` - Max DB connection retries (default: 5)
+- `DB_RETRY_DELAY` - Initial retry delay in seconds (default: 2)
+
+**Railway Deployment:**
+Deploy as a separate Railway service with cron schedule:
+```bash
+# In Railway, create new service from backup_service/ directory
+# Cron runs daily at 3:00 AM UTC
+```
+
+**Manual Usage:**
+```bash
+cd backup_service
+python backup.py              # Run backup
+python backup.py --list       # List available backups
+python backup.py --restore    # Show restore instructions
+```
+
+**Restore from Backup:**
+```bash
+# 1. Download backup from Wasabi/S3
+aws s3 cp s3://clara-backups/backups/clara/clara_YYYYMMDD_HHMMSS.sql.gz . --endpoint-url=https://s3.wasabisys.com
+
+# 2. Decompress
+gunzip clara_YYYYMMDD_HHMMSS.sql.gz
+
+# 3. Restore
+psql $DATABASE_URL < clara_YYYYMMDD_HHMMSS.sql
 ```

@@ -1,4 +1,4 @@
-"""LLM backend abstraction for Clarissa platform.
+"""LLM backend abstraction for Clara platform.
 
 Provides unified interface to multiple LLM providers:
 - OpenRouter (default)
@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import warnings
 from collections.abc import Callable, Generator
 from typing import TYPE_CHECKING, Literal
 
@@ -36,6 +37,17 @@ DEFAULT_TIER: ModelTier = "mid"
 
 # Tool calling configuration
 TOOL_FORMAT = os.getenv("TOOL_FORMAT", "openai").lower()
+# DEPRECATED: TOOL_FORMAT is no longer needed when using LLM_PROVIDER=anthropic
+# Native Anthropic SDK handles tool calling directly without format conversion
+if os.getenv("TOOL_FORMAT"):
+    warnings.warn(
+        "TOOL_FORMAT is deprecated. Use LLM_PROVIDER=anthropic instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+# DEPRECATED: TOOL_MODEL env var is no longer used.
+# Tools now always use tier-based model selection to respect !high, !mid, !low prefixes.
+# This constant is kept for backwards compatibility but has no effect.
 TOOL_MODEL = os.getenv("TOOL_MODEL", "")
 
 # Default models per provider per tier
@@ -56,9 +68,9 @@ DEFAULT_MODELS = {
         "low": "gpt-4o-mini",
     },
     "anthropic": {
-        "high": "claude-opus-4-5-20250514",
-        "mid": "claude-sonnet-4-20250514",
-        "low": "claude-haiku-3-5-20241022",
+        "high": "claude-opus-4-5",
+        "mid": "claude-sonnet-4-5",
+        "low": "claude-haiku-4-5",
     },
 }
 
@@ -80,7 +92,7 @@ def _get_openrouter_client() -> OpenAI:
             raise RuntimeError("OPENROUTER_API_KEY is not set")
 
         site = os.getenv("OPENROUTER_SITE", "http://localhost:3000")
-        title = os.getenv("OPENROUTER_TITLE", "MyPalClarissa")
+        title = os.getenv("OPENROUTER_TITLE", "MyPalClara")
 
         _openrouter_client = OpenAI(
             base_url="https://openrouter.ai/api/v1",
@@ -108,90 +120,6 @@ def _get_nanogpt_client() -> OpenAI:
     return _nanogpt_client
 
 
-def _get_custom_openai_client() -> OpenAI:
-    """Get or create custom OpenAI-compatible client."""
-    global _custom_openai_client
-    if _custom_openai_client is None:
-        api_key = os.getenv("CUSTOM_OPENAI_API_KEY")
-        if not api_key:
-            raise RuntimeError("CUSTOM_OPENAI_API_KEY is not set")
-
-        base_url = os.getenv("CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1")
-
-        _custom_openai_client = OpenAI(
-            base_url=base_url,
-            api_key=api_key,
-        )
-    return _custom_openai_client
-
-
-def _get_openai_tool_client() -> OpenAI:
-    """Get or create dedicated client for tool calling.
-
-    By default, uses the same endpoint as the main chat LLM (based on LLM_PROVIDER).
-    Can be overridden with explicit TOOL_* environment variables.
-    """
-    global _openai_tool_client
-    if _openai_tool_client is None:
-        provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
-
-        # Determine defaults based on main LLM provider
-        if provider == "openai":
-            default_key = os.getenv("CUSTOM_OPENAI_API_KEY")
-            default_url = os.getenv(
-                "CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1"
-            )
-        elif provider == "nanogpt":
-            default_key = os.getenv("NANOGPT_API_KEY")
-            default_url = "https://nano-gpt.com/api/v1"
-        elif provider == "anthropic":
-            default_key = os.getenv("ANTHROPIC_API_KEY")
-            default_url = os.getenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
-        else:  # openrouter
-            default_key = os.getenv("OPENROUTER_API_KEY")
-            default_url = "https://openrouter.ai/api/v1"
-
-        # Use explicit TOOL_* config or fall back to main LLM config
-        api_key = os.getenv("TOOL_API_KEY") or default_key
-        base_url = os.getenv("TOOL_BASE_URL") or default_url
-
-        if not api_key:
-            raise RuntimeError(
-                "No API key found for tool calling. "
-                "Set TOOL_API_KEY or configure your main LLM provider."
-            )
-
-        # Build client config
-        client_kwargs = {
-            "base_url": base_url,
-            "api_key": api_key,
-        }
-
-        # Add provider-specific headers
-        headers = {}
-        if "openrouter.ai" in base_url:
-            site = os.getenv("OPENROUTER_SITE", "http://localhost:3000")
-            title = os.getenv("OPENROUTER_TITLE", "MyPalClarissa")
-            headers = {
-                "HTTP-Referer": site,
-                "X-Title": title,
-            }
-        elif provider == "anthropic":
-            # Add Cloudflare Access headers if configured
-            cf_headers = _get_cf_access_headers()
-            if cf_headers:
-                headers.update(cf_headers)
-            # Override User-Agent to avoid Cloudflare bot detection
-            if base_url and base_url != "https://api.anthropic.com":
-                headers["User-Agent"] = "Clarissa/1.0"
-
-        if headers:
-            client_kwargs["default_headers"] = headers
-
-        _openai_tool_client = OpenAI(**client_kwargs)
-    return _openai_tool_client
-
-
 def _get_cf_access_headers() -> dict[str, str] | None:
     """Get Cloudflare Access headers if configured.
 
@@ -208,6 +136,84 @@ def _get_cf_access_headers() -> dict[str, str] | None:
             "CF-Access-Client-Secret": client_secret,
         }
     return None
+
+
+def _get_custom_openai_client() -> OpenAI:
+    """Get or create custom OpenAI-compatible client."""
+    global _custom_openai_client
+    if _custom_openai_client is None:
+        api_key = os.getenv("CUSTOM_OPENAI_API_KEY")
+        if not api_key:
+            raise RuntimeError("CUSTOM_OPENAI_API_KEY is not set")
+
+        base_url = os.getenv("CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1")
+
+        client_kwargs = {
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+
+        # Add Cloudflare Access headers if configured
+        cf_headers = _get_cf_access_headers()
+        if cf_headers:
+            client_kwargs["default_headers"] = cf_headers
+
+        _custom_openai_client = OpenAI(**client_kwargs)
+    return _custom_openai_client
+
+
+def _get_openai_tool_client() -> OpenAI:
+    """Get or create dedicated client for tool calling.
+
+    By default, uses the same endpoint as the main chat LLM (based on LLM_PROVIDER).
+    Can be overridden with explicit TOOL_* environment variables.
+    """
+    global _openai_tool_client
+    if _openai_tool_client is None:
+        provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+        # Determine defaults based on main LLM provider
+        if provider == "openai":
+            default_key = os.getenv("CUSTOM_OPENAI_API_KEY")
+            default_url = os.getenv("CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1")
+        elif provider == "nanogpt":
+            default_key = os.getenv("NANOGPT_API_KEY")
+            default_url = "https://nano-gpt.com/api/v1"
+        else:  # openrouter
+            default_key = os.getenv("OPENROUTER_API_KEY")
+            default_url = "https://openrouter.ai/api/v1"
+
+        # Use explicit TOOL_* config or fall back to main LLM config
+        api_key = os.getenv("TOOL_API_KEY") or default_key
+        base_url = os.getenv("TOOL_BASE_URL") or default_url
+
+        if not api_key:
+            raise RuntimeError(
+                "No API key found for tool calling. " "Set TOOL_API_KEY or configure your main LLM provider."
+            )
+
+        # Build client config
+        client_kwargs = {
+            "base_url": base_url,
+            "api_key": api_key,
+        }
+
+        # Add OpenRouter headers if using OpenRouter
+        if "openrouter.ai" in base_url:
+            site = os.getenv("OPENROUTER_SITE", "http://localhost:3000")
+            title = os.getenv("OPENROUTER_TITLE", "MyPalClara")
+            client_kwargs["default_headers"] = {
+                "HTTP-Referer": site,
+                "X-Title": title,
+            }
+        else:
+            # Add Cloudflare Access headers if configured (for custom endpoints)
+            cf_headers = _get_cf_access_headers()
+            if cf_headers:
+                client_kwargs["default_headers"] = cf_headers
+
+        _openai_tool_client = OpenAI(**client_kwargs)
+    return _openai_tool_client
 
 
 def _get_anthropic_client() -> Anthropic:
@@ -237,7 +243,7 @@ def _get_anthropic_client() -> Anthropic:
 
         # Override User-Agent to avoid Cloudflare bot detection
         if base_url:
-            headers["User-Agent"] = "Clarissa/1.0"
+            headers["User-Agent"] = "Clara/1.0"
 
         if headers:
             client_kwargs["default_headers"] = headers
@@ -259,10 +265,7 @@ def _get_anthropic_tool_client() -> Anthropic:
         base_url = os.getenv("TOOL_BASE_URL") or os.getenv("ANTHROPIC_BASE_URL")
 
         if not api_key:
-            raise RuntimeError(
-                "No API key found for Anthropic tool calling. "
-                "Set TOOL_API_KEY or ANTHROPIC_API_KEY."
-            )
+            raise RuntimeError("No API key found for Anthropic tool calling. " "Set TOOL_API_KEY or ANTHROPIC_API_KEY.")
 
         client_kwargs: dict = {"api_key": api_key}
         if base_url:
@@ -278,7 +281,7 @@ def _get_anthropic_tool_client() -> Anthropic:
 
         # Override User-Agent to avoid Cloudflare bot detection
         if base_url:
-            headers["User-Agent"] = "Clarissa/1.0"
+            headers["User-Agent"] = "Clara/1.0"
 
         if headers:
             client_kwargs["default_headers"] = headers
@@ -296,9 +299,10 @@ def get_model_for_tier(tier: ModelTier, provider: str | None = None) -> str:
     Checks environment variables first, then falls back to defaults.
 
     Environment variables (by provider):
-        OpenRouter: OPENROUTER_MODEL_HIGH, OPENROUTER_MODEL_MID, OPENROUTER_MODEL_LOW
-        NanoGPT: NANOGPT_MODEL_HIGH, NANOGPT_MODEL_MID, NANOGPT_MODEL_LOW
-        OpenAI: CUSTOM_OPENAI_MODEL_HIGH, CUSTOM_OPENAI_MODEL_MID, CUSTOM_OPENAI_MODEL_LOW
+        OpenRouter: OPENROUTER_MODEL_{HIGH,MID,LOW}
+        NanoGPT: NANOGPT_MODEL_{HIGH,MID,LOW}
+        OpenAI: CUSTOM_OPENAI_MODEL_{HIGH,MID,LOW}
+        Anthropic: ANTHROPIC_MODEL_{HIGH,MID,LOW}
 
     For backwards compatibility:
         - If tier-specific env var is not set, falls back to the base model env var
@@ -324,9 +328,7 @@ def get_model_for_tier(tier: ModelTier, provider: str | None = None) -> str:
         # Fall back to base model for mid tier, or defaults
         if tier == "mid":
             return os.getenv("OPENROUTER_MODEL", DEFAULT_MODELS["openrouter"]["mid"])
-        return DEFAULT_MODELS["openrouter"].get(
-            tier, DEFAULT_MODELS["openrouter"]["mid"]
-        )
+        return DEFAULT_MODELS["openrouter"].get(tier, DEFAULT_MODELS["openrouter"]["mid"])
 
     elif provider == "nanogpt":
         tier_model = os.getenv(f"NANOGPT_MODEL_{tier_upper}")
@@ -356,20 +358,27 @@ def get_model_for_tier(tier: ModelTier, provider: str | None = None) -> str:
         raise ValueError(f"Unknown provider: {provider}")
 
 
-def get_current_tier() -> ModelTier:
-    """Get the current default tier from environment."""
-    tier = os.getenv("MODEL_TIER", DEFAULT_TIER).lower()
+def get_current_tier() -> ModelTier | None:
+    """Get the current default tier from environment.
+
+    Returns None if MODEL_TIER is not explicitly set, allowing callers
+    to fall back to the base model instead of assuming "mid" tier.
+    """
+    tier = os.getenv("MODEL_TIER", "").lower()
     if tier in ("high", "mid", "low"):
         return tier  # type: ignore
-    return DEFAULT_TIER
+    return None
 
 
 def get_tier_info() -> dict:
     """Get information about configured tiers for current provider."""
     provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+    current_tier = get_current_tier()
     return {
         "provider": provider,
-        "current_tier": get_current_tier(),
+        "current_tier": current_tier,
+        "default_model": get_base_model(provider),
+        "using_tiers": current_tier is not None,
         "models": {
             "high": get_model_for_tier("high", provider),
             "mid": get_model_for_tier("mid", provider),
@@ -388,15 +397,20 @@ def make_llm(tier: ModelTier | None = None) -> Callable[[list[dict[str, str]]], 
       - "openrouter" (default)
       - "nanogpt"
       - "openai" (custom OpenAI-compatible endpoint)
-      - "anthropic" (native Anthropic SDK)
+      - "anthropic" (native Anthropic SDK with base_url support)
 
     Args:
         tier: Optional model tier ("high", "mid", "low").
-              If None, uses the default tier from MODEL_TIER env var or "mid".
+              If None, uses MODEL_TIER env var if set, otherwise uses the base model.
     """
     provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
     effective_tier = tier or get_current_tier()
-    model = get_model_for_tier(effective_tier, provider)
+
+    # If no tier specified and MODEL_TIER not set, use base model
+    if effective_tier is None:
+        model = get_base_model(provider)
+    else:
+        model = get_model_for_tier(effective_tier, provider)
 
     if provider == "openrouter":
         return _make_openrouter_llm_with_model(model)
@@ -465,6 +479,7 @@ def _make_anthropic_llm_with_model(
     """Non-streaming native Anthropic LLM with specified model.
 
     Handles system message extraction (Anthropic uses separate system param).
+    Also handles multimodal content (images) conversion.
     """
     client = _get_anthropic_client()
 
@@ -475,9 +490,12 @@ def _make_anthropic_llm_with_model(
         filtered = []
         for m in messages:
             if m.get("role") == "system":
-                system_parts.append(m.get("content", ""))
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    system_parts.append(content)
             else:
-                filtered.append(m)
+                # Convert multimodal content if needed
+                filtered.append(_convert_message_to_anthropic(m))
         system = "\n\n".join(system_parts)
 
         kwargs: dict = {
@@ -505,11 +523,16 @@ def make_llm_streaming(
 
     Args:
         tier: Optional model tier ("high", "mid", "low").
-              If None, uses the default tier from MODEL_TIER env var or "mid".
+              If None, uses MODEL_TIER env var if set, otherwise uses the base model.
     """
     provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
     effective_tier = tier or get_current_tier()
-    model = get_model_for_tier(effective_tier, provider)
+
+    # If no tier specified and MODEL_TIER not set, use base model
+    if effective_tier is None:
+        model = get_base_model(provider)
+    else:
+        model = get_model_for_tier(effective_tier, provider)
 
     if provider == "openrouter":
         return _make_openrouter_llm_streaming_with_model(model)
@@ -587,7 +610,10 @@ def _make_custom_openai_llm_streaming_with_model(
 def _make_anthropic_llm_streaming_with_model(
     model: str,
 ) -> Callable[[list[dict[str, str]]], Generator[str, None, None]]:
-    """Streaming native Anthropic LLM with specified model."""
+    """Streaming native Anthropic LLM with specified model.
+
+    Also handles multimodal content (images) conversion.
+    """
     client = _get_anthropic_client()
 
     def llm(messages: list[dict[str, str]]) -> Generator[str, None, None]:
@@ -597,9 +623,12 @@ def _make_anthropic_llm_streaming_with_model(
         filtered = []
         for m in messages:
             if m.get("role") == "system":
-                system_parts.append(m.get("content", ""))
+                content = m.get("content", "")
+                if isinstance(content, str):
+                    system_parts.append(content)
             else:
-                filtered.append(m)
+                # Convert multimodal content if needed
+                filtered.append(_convert_message_to_anthropic(m))
         system = "\n\n".join(system_parts)
 
         kwargs: dict = {
@@ -633,9 +662,7 @@ def _convert_tools_to_claude_format(tools: list[dict]) -> list[dict]:
                 {
                     "name": func.get("name"),
                     "description": func.get("description", ""),
-                    "input_schema": func.get(
-                        "parameters", {"type": "object", "properties": {}}
-                    ),
+                    "input_schema": func.get("parameters", {"type": "object", "properties": {}}),
                 }
             )
         else:
@@ -698,9 +725,7 @@ def _convert_messages_to_claude_format(messages: list[dict]) -> list[dict]:
                         "type": "tool_use",
                         "id": tc.get("id"),
                         "name": tc.get("function", {}).get("name"),
-                        "input": json.loads(
-                            tc.get("function", {}).get("arguments", "{}")
-                        ),
+                        "input": json.loads(tc.get("function", {}).get("arguments", "{}")),
                     }
                 )
 
@@ -726,33 +751,70 @@ def _convert_messages_to_claude_format(messages: list[dict]) -> list[dict]:
     return claude_messages
 
 
+def get_base_model(provider: str | None = None) -> str:
+    """Get the base model for a provider (without tier suffix).
+
+    Returns the model from the base env var (e.g., CUSTOM_OPENAI_MODEL)
+    rather than a tier-specific one (e.g., CUSTOM_OPENAI_MODEL_LOW).
+
+    Args:
+        provider: The LLM provider. If None, uses LLM_PROVIDER env var.
+
+    Returns:
+        The base model name.
+    """
+    if provider is None:
+        provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+    if provider == "openrouter":
+        return os.getenv("OPENROUTER_MODEL", DEFAULT_MODELS["openrouter"]["mid"])
+    elif provider == "nanogpt":
+        return os.getenv("NANOGPT_MODEL", DEFAULT_MODELS["nanogpt"]["mid"])
+    elif provider == "openai":
+        return os.getenv("CUSTOM_OPENAI_MODEL", DEFAULT_MODELS["openai"]["mid"])
+    elif provider == "anthropic":
+        return os.getenv("ANTHROPIC_MODEL", DEFAULT_MODELS["anthropic"]["mid"])
+    else:
+        raise ValueError(f"Unknown provider: {provider}")
+
+
 def _get_tool_model(tier: ModelTier | None = None) -> str:
     """Get the model to use for tool calling.
 
-    Checks TOOL_MODEL env var first, then falls back to tier-based selection.
+    Tool calls never use "low" tier - they use the base model at minimum.
+    This ensures tools always have sufficient capability (never haiku).
 
     Args:
-        tier: Optional tier override. If None, uses default tier.
+        tier: Optional tier override. If None, uses MODEL_TIER env var if set,
+              otherwise uses base model. "low" tier is bumped to use the base model.
     """
-    # Explicit TOOL_MODEL takes priority
-    if tool_model := os.getenv("TOOL_MODEL"):
-        return tool_model
-
-    # Use tier-based model selection
     provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+    # Never use "low" tier for tools - use base model instead
+    if tier == "low":
+        return get_base_model(provider)
+
+    # For other tiers (high, mid, None), use tier-based selection
     effective_tier = tier or get_current_tier()
+
+    # If no tier specified and MODEL_TIER not set, use base model
+    if effective_tier is None:
+        return get_base_model(provider)
+
     return get_model_for_tier(effective_tier, provider)
 
 
 def make_llm_with_tools(
     tools: list[dict] | None = None,
     tier: ModelTier | None = None,
-) -> Callable[[list[dict]], ChatCompletion | dict]:
-    """Return a function(messages) -> ChatCompletion/dict that supports tool calling.
+) -> Callable[[list[dict]], ChatCompletion]:
+    """Return a function(messages) -> ChatCompletion that supports tool calling.
 
     Uses the same endpoint as your main chat LLM by default.
-    For Anthropic provider, uses native Anthropic SDK and converts response to
-    OpenAI-compatible format for unified handling.
+    Set TOOL_FORMAT=claude if using a Claude proxy (like clewdr).
+
+    The returned function takes messages and returns the full ChatCompletion
+    object so the caller can handle tool_calls if present.
 
     Args:
         tools: List of tool definitions in OpenAI format. If None, no tools.
@@ -761,23 +823,7 @@ def make_llm_with_tools(
 
     Returns:
         Function that calls the LLM with tool support.
-        Returns ChatCompletion for OpenAI-compatible providers,
-        or dict (OpenAI-compatible format) for Anthropic.
     """
-    provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
-
-    # For Anthropic provider, use native Anthropic SDK
-    if provider == "anthropic":
-        anthropic_llm = make_llm_with_tools_anthropic(tools, tier)
-
-        def llm_anthropic(messages: list[dict]) -> _MockCompletion:
-            response = anthropic_llm(messages)
-            # Convert Anthropic response to OpenAI-compatible format
-            return anthropic_to_openai_response(response)
-
-        return llm_anthropic
-
-    # For other providers, use OpenAI-compatible client
     client = _get_openai_tool_client()
     tool_model = _get_tool_model(tier)
     tool_format = os.getenv("TOOL_FORMAT", "openai").lower()
@@ -798,7 +844,64 @@ def make_llm_with_tools(
     return llm
 
 
-# ============== Native Anthropic Tool Calling ==============
+def make_llm_with_tools_anthropic(
+    tools: list[dict] | None = None,
+    tier: ModelTier | None = None,
+) -> Callable[[list[dict]], anthropic.types.Message]:
+    """Return a function(messages) -> anthropic.types.Message for native tool calling.
+
+    Uses the native Anthropic SDK with native Claude tool format.
+    Unlike make_llm_with_tools(), this returns Anthropic Message objects directly.
+
+    Tool calls never use "low" tier - they use the base model at minimum.
+
+    Args:
+        tools: List of tool definitions in OpenAI format (will be converted).
+        tier: Optional model tier ("high", "mid", "low").
+              If None, uses MODEL_TIER env var if set, otherwise uses base model.
+              "low" tier is bumped to use the base model.
+
+    Returns:
+        Function that calls Anthropic with native tool support.
+    """
+    client = _get_anthropic_tool_client()
+
+    # Never use "low" tier for tools - use base model instead
+    if tier == "low":
+        model = get_base_model("anthropic")
+    else:
+        effective_tier = tier or get_current_tier()
+        # If no tier specified and MODEL_TIER not set, use base model
+        if effective_tier is None:
+            model = get_base_model("anthropic")
+        else:
+            model = get_model_for_tier(effective_tier, "anthropic")
+
+    def llm(messages: list[dict]) -> anthropic.types.Message:
+        # Extract system messages (Anthropic handles it separately)
+        # Concatenate multiple system messages since build_prompt creates two
+        system_parts = []
+        filtered = []
+        for m in messages:
+            if m.get("role") == "system":
+                system_parts.append(m.get("content", ""))
+            else:
+                filtered.append(_convert_message_to_anthropic(m))
+        system = "\n\n".join(system_parts)
+
+        kwargs: dict = {
+            "model": model,
+            "max_tokens": 4096,
+            "messages": filtered,
+        }
+        if system:
+            kwargs["system"] = system
+        if tools:
+            kwargs["tools"] = _convert_tools_to_claude_format(tools)
+
+        return client.messages.create(**kwargs)
+
+    return llm
 
 
 def _convert_message_to_anthropic(msg: dict) -> dict:
@@ -807,6 +910,7 @@ def _convert_message_to_anthropic(msg: dict) -> dict:
     Handles:
     - Assistant messages with tool_calls -> assistant with tool_use content blocks
     - Tool role messages -> user messages with tool_result content blocks
+    - User messages with multimodal content (images) -> converted to Anthropic image format
     - Regular messages -> pass through
     """
     role = msg.get("role")
@@ -840,112 +944,59 @@ def _convert_message_to_anthropic(msg: dict) -> dict:
             ],
         }
 
+    elif role == "user" and isinstance(msg.get("content"), list):
+        # Convert multimodal content from OpenAI format to Anthropic format
+        converted_content = []
+        for part in msg["content"]:
+            if part.get("type") == "text":
+                converted_content.append(part)
+            elif part.get("type") == "image_url":
+                # Convert from OpenAI's data URL format to Anthropic's base64 format
+                image_url = part.get("image_url", {}).get("url", "")
+                if image_url.startswith("data:"):
+                    # Parse data URL: data:image/png;base64,<data>
+                    try:
+                        header, base64_data = image_url.split(",", 1)
+                        media_type = header.split(":")[1].split(";")[0]
+                        converted_content.append(
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": media_type,
+                                    "data": base64_data,
+                                },
+                            }
+                        )
+                    except (ValueError, IndexError):
+                        # Fall back to passing as-is if parsing fails
+                        converted_content.append(part)
+                else:
+                    # HTTP URL - Anthropic supports URLs directly
+                    converted_content.append(
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": image_url,
+                            },
+                        }
+                    )
+        return {"role": "user", "content": converted_content}
+
     return msg
 
 
-def make_llm_with_tools_anthropic(
-    tools: list[dict] | None = None,
-    tier: ModelTier | None = None,
-) -> Callable[[list[dict]], anthropic.types.Message]:
-    """Return a function(messages) -> anthropic.types.Message for native tool calling.
-
-    Uses the native Anthropic SDK with native Claude tool format.
-    Unlike make_llm_with_tools(), this returns Anthropic Message objects directly.
-
-    Args:
-        tools: List of tool definitions in OpenAI format (will be converted).
-        tier: Optional model tier ("high", "mid", "low").
-              If None, uses MODEL_TIER env var if set, otherwise uses mid tier.
-
-    Returns:
-        Function that calls Anthropic with native tool support.
-    """
-    client = _get_anthropic_tool_client()
-
-    effective_tier = tier or get_current_tier()
-    model = get_model_for_tier(effective_tier, "anthropic")
-
-    def llm(messages: list[dict]) -> anthropic.types.Message:
-        # Extract system messages (Anthropic handles it separately)
-        # Concatenate multiple system messages since build_prompt creates two
-        system_parts = []
-        filtered = []
-        for m in messages:
-            if m.get("role") == "system":
-                system_parts.append(m.get("content", ""))
-            else:
-                filtered.append(_convert_message_to_anthropic(m))
-        system = "\n\n".join(system_parts)
-
-        kwargs: dict = {
-            "model": model,
-            "max_tokens": 4096,
-            "messages": filtered,
-        }
-        if system:
-            kwargs["system"] = system
-        if tools:
-            kwargs["tools"] = _convert_tools_to_claude_format(tools)
-
-        return client.messages.create(**kwargs)
-
-    return llm
-
-
-class _MockFunction:
-    """Mock OpenAI function object for Anthropic compatibility."""
-
-    def __init__(self, name: str, arguments: str):
-        self.name = name
-        self.arguments = arguments
-
-
-class _MockToolCall:
-    """Mock OpenAI tool call object for Anthropic compatibility."""
-
-    def __init__(self, id: str, name: str, arguments: str):
-        self.id = id
-        self.type = "function"
-        self.function = _MockFunction(name, arguments)
-
-
-class _MockMessage:
-    """Mock OpenAI message object for Anthropic compatibility."""
-
-    def __init__(self, content: str | None, role: str, tool_calls: list | None):
-        self.content = content
-        self.role = role
-        self.tool_calls = tool_calls
-
-
-class _MockChoice:
-    """Mock OpenAI choice object for Anthropic compatibility."""
-
-    def __init__(self, message: _MockMessage):
-        self.message = message
-        self.index = 0
-        self.finish_reason = "stop"
-
-
-class _MockCompletion:
-    """Mock OpenAI ChatCompletion object for Anthropic compatibility."""
-
-    def __init__(self, message: _MockMessage):
-        self.choices = [_MockChoice(message)]
-        self.model = "anthropic"
-        self.id = "anthropic-response"
-
-
-def anthropic_to_openai_response(msg: anthropic.types.Message) -> _MockCompletion:
-    """Convert Anthropic Message to OpenAI-like ChatCompletion for compatibility.
+def anthropic_to_openai_response(msg: anthropic.types.Message) -> dict:
+    """Convert Anthropic Message to OpenAI-like response dict for compatibility.
 
     This allows the Discord bot to process Anthropic responses using the same
     code path as OpenAI responses.
 
-    Returns a mock ChatCompletion object with:
-    - choices[0].message.content: text content (or None)
-    - choices[0].message.role: "assistant"
-    - choices[0].message.tool_calls: list of tool calls in OpenAI format (if any)
+    Returns a dict with:
+    - content: text content (or None)
+    - role: "assistant"
+    - tool_calls: list of tool calls in OpenAI format (if any)
     """
     tool_calls = []
     text_content = ""
@@ -955,17 +1006,145 @@ def anthropic_to_openai_response(msg: anthropic.types.Message) -> _MockCompletio
             text_content += block.text
         elif block.type == "tool_use":
             tool_calls.append(
-                _MockToolCall(
-                    id=block.id,
-                    name=block.name,
-                    arguments=json.dumps(block.input),
-                )
+                {
+                    "id": block.id,
+                    "type": "function",
+                    "function": {
+                        "name": block.name,
+                        "arguments": json.dumps(block.input),
+                    },
+                }
             )
 
-    message = _MockMessage(
-        content=text_content or None,
-        role="assistant",
-        tool_calls=tool_calls if tool_calls else None,
-    )
+    result = {
+        "content": text_content or None,
+        "role": "assistant",
+    }
+    if tool_calls:
+        result["tool_calls"] = tool_calls
 
-    return _MockCompletion(message)
+    return result
+
+
+# ============== Tool Description Generator ==============
+
+# Tool description settings from environment
+TOOL_DESC_TIER = os.getenv("TOOL_DESC_TIER", "high").lower()  # high/mid/low
+TOOL_DESC_MAX_WORDS = int(os.getenv("TOOL_DESC_MAX_WORDS", "20"))
+
+
+async def generate_tool_description(
+    tool_name: str,
+    args: dict,
+    max_words: int | None = None,
+) -> str | None:
+    """Generate a descriptive explanation of a tool call.
+
+    Uses a configurable model tier for generating rich, contextual descriptions.
+
+    Environment variables:
+        TOOL_DESC_TIER: Model tier to use (default: "high" for Opus-class)
+        TOOL_DESC_MAX_WORDS: Maximum words in description (default: 20)
+
+    Args:
+        tool_name: Name of the tool being called
+        args: Tool arguments
+        max_words: Override for max words (uses TOOL_DESC_MAX_WORDS if not provided)
+
+    Returns:
+        Descriptive explanation or None if generation fails
+    """
+    import asyncio
+
+    if max_words is None:
+        max_words = TOOL_DESC_MAX_WORDS
+
+    # Expand args to show more context
+    args_summary = json.dumps(args, default=str, indent=2)
+    if len(args_summary) > 500:
+        args_summary = args_summary[:500] + "\n..."
+
+    prompt = f"""Describe what this tool call does in {max_words} words or fewer. Be specific, descriptive, and explain the purpose. Include relevant details from the arguments.
+
+Tool: {tool_name}
+Arguments:
+{args_summary}
+
+Guidelines:
+- Use present tense action verbs (e.g., "Executing", "Fetching", "Analyzing")
+- Include key details like filenames, search queries, or specific actions
+- Explain the purpose when clear from context
+- Be concise but informative
+
+Examples:
+- execute_python with code="df.describe()" -> "Analyzing dataframe to compute summary statistics including mean, std, min, and max values"
+- web_search with query="python async tutorial" -> "Searching the web for Python async/await tutorials and documentation"
+- read_local_file with filename="config.json" -> "Reading the config.json file to retrieve configuration settings"
+- github_create_issue with title="Fix login bug" -> "Creating a new GitHub issue to track the login bug fix"
+- install_package with package="pandas" -> "Installing the pandas data analysis library"
+
+Your description (no quotes, no period at end):"""
+
+    try:
+        provider = os.getenv("LLM_PROVIDER", "openrouter").lower()
+
+        # Use configurable tier (default: high for richer descriptions)
+        tier = TOOL_DESC_TIER
+        if tier not in ("high", "mid", "low"):
+            tier = "high"
+
+        max_tokens = 100 if max_words > 10 else 60
+
+        if provider == "anthropic":
+            client = _get_anthropic_client()
+            model = get_model_for_tier(tier, "anthropic")
+
+            # Run in thread pool since Anthropic client is sync
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.messages.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+            )
+            text = response.content[0].text.strip()
+        else:
+            # Use OpenAI-compatible client
+            if provider == "nanogpt":
+                client = _get_nanogpt_client()
+            elif provider == "openai":
+                client = _get_custom_openai_client()
+            else:  # openrouter
+                client = _get_openrouter_client()
+
+            model = get_model_for_tier(tier, provider)
+
+            # Run in thread pool
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: client.chat.completions.create(
+                    model=model,
+                    max_tokens=max_tokens,
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+            )
+            text = response.choices[0].message.content.strip()
+
+        # Clean up response
+        text = text.strip("\"'")
+        if text.endswith("."):
+            text = text[:-1]
+
+        # Validate length - be more lenient with longer descriptions
+        words = text.split()
+        if len(words) > max_words + 5:
+            text = " ".join(words[:max_words])
+
+        return text
+
+    except Exception:
+        # Silently fail - description is optional
+        return None

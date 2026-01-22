@@ -1,6 +1,6 @@
-"""Unified tool registry for Clarissa platform.
+"""Unified tool registry for Clara platform.
 
-Provides a central registry for all tools that Clarissa can use, with support for:
+Provides a central registry for all tools that Clara can use, with support for:
 - Platform-specific tool filtering
 - Async tool execution
 - Tool definition in OpenAI format
@@ -15,7 +15,7 @@ from typing import Any, ClassVar
 
 @dataclass
 class ToolDefinition:
-    """Definition of a tool that Clarissa can use."""
+    """Definition of a tool that Clara can use."""
 
     # Tool name (must be unique)
     name: str
@@ -50,7 +50,7 @@ class ToolDefinition:
 
 
 class ToolRegistry:
-    """Central registry for all Clarissa tools.
+    """Central registry for all Clara tools.
 
     Usage:
         # Initialize (call once at startup)
@@ -296,10 +296,8 @@ def register_docker_tools(registry: ToolRegistry) -> None:
     """
     # Import here to avoid circular imports
     try:
-        from sandbox.docker import (
-            get_sandbox_manager,
-            DOCKER_TOOLS,
-        )
+        from sandbox.docker import DOCKER_TOOLS
+        from sandbox.manager import get_sandbox_manager
     except ImportError:
         print("[tools] Docker tools not available (sandbox.docker module not found)")
         return

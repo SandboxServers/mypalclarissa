@@ -1,4 +1,4 @@
-"""Memory management for Clarissa platform.
+"""Memory management for Clara platform.
 
 Provides the MemoryManager singleton that handles:
 - Thread/message persistence
@@ -11,9 +11,19 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
+
+from config.logging import get_discord_handler, get_logger
+
+# Module loggers
+logger = get_logger("mem0")
+thread_logger = get_logger("thread")
+memory_logger = get_logger("memory")
+
+# Timezone for message timestamps (defaults to America/New_York)
+DEFAULT_TIMEZONE = os.getenv("DEFAULT_TIMEZONE", "America/New_York")
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session as OrmSession
@@ -24,7 +34,8 @@ if TYPE_CHECKING:
 CONTEXT_MESSAGE_COUNT = 15  # Reduced from 20 to save tokens
 SUMMARY_INTERVAL = 10
 MAX_SEARCH_QUERY_CHARS = 6000
-MAX_MEMORIES_PER_TYPE = 50  # Limit memories to reduce token usage
+MAX_KEY_MEMORIES = 15  # Key memories always included in every request
+MAX_MEMORIES_PER_TYPE = 35  # Limit per type (50 total - 15 reserved for key memories)
 
 # Paths for initial profile loading
 BASE_DIR = Path(__file__).parent.parent
@@ -41,10 +52,34 @@ def _has_generated_memories() -> bool:
     return any((GENERATED_DIR / f).exists() for f in memory_files)
 
 
+def _format_message_timestamp(dt: datetime | None) -> str:
+    """Format a message timestamp for display in conversation history.
+
+    Returns short time format like "10:43 PM" in the configured timezone.
+    """
+    if dt is None:
+        return ""
+
+    try:
+        from zoneinfo import ZoneInfo
+
+        tz = ZoneInfo(DEFAULT_TIMEZONE)
+        # Convert to local timezone if UTC
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        local_dt = dt.astimezone(tz)
+        return local_dt.strftime("%-I:%M %p")
+    except Exception:
+        # Fallback to UTC
+        if dt.tzinfo is None:
+            return dt.strftime("%H:%M UTC")
+        return dt.strftime("%-I:%M %p")
+
+
 def _generate_memories_from_profile() -> dict | None:
     """Generate structured memories from user_profile.txt using LLM extraction."""
     if not USER_PROFILE_PATH.exists():
-        print("[mem0] No user_profile.txt found, cannot generate memories")
+        logger.warning("No user_profile.txt found, cannot generate memories")
         return None
 
     from scripts.bootstrap_memory import (
@@ -54,7 +89,7 @@ def _generate_memories_from_profile() -> dict | None:
         write_json_files,
     )
 
-    print("[mem0] Generating memories from user_profile.txt...")
+    logger.info("Generating memories from user_profile.txt...")
     try:
         profile_text = USER_PROFILE_PATH.read_text()
         raw_memories = extract_memories_with_llm(profile_text)
@@ -63,10 +98,7 @@ def _generate_memories_from_profile() -> dict | None:
         write_json_files(memories, GENERATED_DIR)
         return memories
     except Exception as e:
-        print(f"[mem0] Error generating memories: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Error generating memories: {e}", exc_info=True)
         return None
 
 
@@ -82,15 +114,15 @@ def load_initial_profile(user_id: str) -> None:
 
     skip_profile = os.getenv("SKIP_PROFILE_LOAD", "true").lower() == "true"
     if skip_profile:
-        print("[mem0] Profile loading disabled (SKIP_PROFILE_LOAD=true)")
+        logger.debug("Profile loading disabled (SKIP_PROFILE_LOAD=true)")
         return
 
     if MEM0 is None:
-        print("[mem0] Skipping profile load - mem0 not available")
+        logger.warning("Skipping profile load - mem0 not available")
         return
 
     if PROFILE_LOADED_FLAG.exists():
-        print("[mem0] Profile already loaded (flag exists), skipping")
+        logger.debug("Profile already loaded (flag exists), skipping")
         return
 
     from src.bootstrap_memory import (
@@ -99,55 +131,62 @@ def load_initial_profile(user_id: str) -> None:
     )
 
     if _has_generated_memories():
-        print("[mem0] Loading from existing generated/*.json files...")
+        logger.info("Loading from existing generated/*.json files...")
         memories = load_existing_memories(GENERATED_DIR)
     else:
-        print("[mem0] No generated files found, extracting from profile...")
+        logger.info("No generated files found, extracting from profile...")
         memories = _generate_memories_from_profile()
         if not memories:
-            print("[mem0] Could not generate memories, skipping profile load")
+            logger.warning("Could not generate memories, skipping profile load")
             return
 
-    print("[mem0] Creating flag file to prevent duplicate loads...")
+    logger.debug("Creating flag file to prevent duplicate loads...")
     try:
         PROFILE_LOADED_FLAG.write_text(
             f"loading started at {datetime.now().isoformat()}"
         )
     except Exception as e:
-        print(f"[mem0] ERROR: Could not create flag file: {e}")
+        logger.error(f"Could not create flag file: {e}")
 
     try:
         apply_to_mem0(memories, user_id)
         PROFILE_LOADED_FLAG.write_text(f"completed at {datetime.now().isoformat()}")
-        print("[mem0] Profile loaded successfully")
+        logger.info("Profile loaded successfully")
     except Exception as e:
-        print(f"[mem0] Error applying memories to mem0: {e}")
-        import traceback
-
-        traceback.print_exc()
+        logger.error(f"Error applying memories to mem0: {e}", exc_info=True)
 
 
 class MemoryManager:
-    """Central orchestrator for Clarissa's memory system.
+    """Central orchestrator for Clara's memory system.
 
     Handles:
     - Thread and message persistence
-    - mem0 semantic memory integration
+    - mem0 semantic memory integration (with entity-scoped memory)
     - Session summaries
     - Prompt building with full context
+
+    Entity Scoping:
+    - user_id: The human user (e.g., "discord-271274659385835521")
+    - agent_id: The bot persona (e.g., "clara", "flo")
 
     This is a singleton - use MemoryManager.get_instance() after initialization.
     """
 
     _instance: ClassVar["MemoryManager | None"] = None
 
-    def __init__(self, llm_callable: Callable[[list[dict]], str]):
+    def __init__(
+        self,
+        llm_callable: Callable[[list[dict]], str],
+        agent_id: str = "clara",
+    ):
         """Initialize MemoryManager.
 
         Args:
             llm_callable: Function that takes messages and returns LLM response
+            agent_id: Bot persona identifier for entity-scoped memory (default: "clara")
         """
         self.llm = llm_callable
+        self.agent_id = agent_id
 
     @classmethod
     def get_instance(cls) -> "MemoryManager":
@@ -163,18 +202,26 @@ class MemoryManager:
         return cls._instance
 
     @classmethod
-    def initialize(cls, llm_callable: Callable[[list[dict]], str]) -> "MemoryManager":
+    def initialize(
+        cls,
+        llm_callable: Callable[[list[dict]], str],
+        agent_id: str | None = None,
+    ) -> "MemoryManager":
         """Initialize the singleton MemoryManager.
 
         Args:
             llm_callable: Function that takes messages and returns LLM response
+            agent_id: Bot persona identifier. If None, uses BOT_NAME env var or "clara".
 
         Returns:
             The initialized MemoryManager instance
         """
         if cls._instance is None:
-            cls._instance = cls(llm_callable=llm_callable)
-            print("[memory] MemoryManager initialized")
+            # Get agent_id from BOT_NAME env var if not provided
+            if agent_id is None:
+                agent_id = os.getenv("BOT_NAME", "clara").lower()
+            cls._instance = cls(llm_callable=llm_callable, agent_id=agent_id)
+            memory_logger.info(f"MemoryManager initialized (agent_id={agent_id})")
         return cls._instance
 
     @classmethod
@@ -302,7 +349,7 @@ class MemoryManager:
         summary = self.llm(summary_prompt)
         thread.session_summary = summary
         db.commit()
-        print(f"[thread] Updated summary for thread {thread.id}")
+        thread_logger.info(f"Updated summary for thread {thread.id}")
         return summary
 
     # ---------- mem0 integration ----------
@@ -313,14 +360,23 @@ class MemoryManager:
         project_id: str,
         user_message: str,
         participants: list[dict] | None = None,
+        is_dm: bool = False,
     ) -> tuple[list[str], list[str]]:
         """Fetch relevant memories from mem0.
+
+        Uses entity-scoped memory with user_id + agent_id for proper isolation.
+
+        Memory retrieval:
+        1. First fetch "key" memories (is_key=true) - always included
+        2. Then fetch relevant memories via semantic search
+        3. Combine with key memories first, then relevant (deduplicated)
 
         Args:
             user_id: The user making the request
             project_id: Project context
             user_message: The message to search for relevant memories
             participants: List of {"id": str, "name": str} for conversation members
+            is_dm: Whether this is a DM conversation (changes retrieval priority)
 
         Returns:
             Tuple of (user_memories, project_memories)
@@ -330,20 +386,57 @@ class MemoryManager:
         if MEM0 is None:
             return [], []
 
+        # 1. Fetch key memories first (always included)
+        key_mems: list[str] = []
+        try:
+            key_res = MEM0.get_all(
+                user_id=user_id,
+                agent_id=self.agent_id,
+                filters={"is_key": "true"},  # String "true" to match JSON boolean
+                limit=MAX_KEY_MEMORIES,
+            )
+            for r in key_res.get("results", []):
+                key_mems.append(f"[KEY] {r['memory']}")
+        except Exception as e:
+            logger.error(f"Error fetching key memories: {e}")
+
         # Truncate search query if too long
         search_query = user_message
         if len(search_query) > MAX_SEARCH_QUERY_CHARS:
             search_query = search_query[-MAX_SEARCH_QUERY_CHARS:]
-            print(f"[mem0] Truncated search query to {MAX_SEARCH_QUERY_CHARS} chars")
+            logger.debug(f"Truncated search query to {MAX_SEARCH_QUERY_CHARS} chars")
 
-        user_res = MEM0.search(search_query, user_id=user_id)
-        proj_res = MEM0.search(
-            search_query,
-            user_id=user_id,
-            filters={"project_id": project_id},
-        )
+        # 2. Entity-scoped search: user_id + agent_id
+        try:
+            user_res = MEM0.search(
+                search_query,
+                user_id=user_id,
+                agent_id=self.agent_id,
+            )
+        except Exception as e:
+            logger.error(f"Error searching user memories: {e}", exc_info=True)
+            user_res = {"results": []}
 
-        user_mems = [r["memory"] for r in user_res.get("results", [])]
+        try:
+            proj_res = MEM0.search(
+                search_query,
+                user_id=user_id,
+                agent_id=self.agent_id,
+                filters={"project_id": project_id},
+            )
+        except Exception as e:
+            logger.error(f"Error searching project memories: {e}", exc_info=True)
+            proj_res = {"results": []}
+
+        # Build user memories: key first, then relevant (deduplicated)
+        user_mems = list(key_mems)  # Start with key memories
+        key_texts = {m.replace("[KEY] ", "") for m in key_mems}  # For dedup
+
+        for r in user_res.get("results", []):
+            mem = r["memory"]
+            if mem not in key_texts:  # Don't duplicate key memories
+                user_mems.append(mem)
+
         proj_mems = [r["memory"] for r in proj_res.get("results", [])]
 
         # Also search for memories about each participant
@@ -358,15 +451,16 @@ class MemoryManager:
                     p_search = MEM0.search(
                         f"{p_name} {search_query[:500]}",
                         user_id=user_id,
+                        agent_id=self.agent_id,
                     )
                     for r in p_search.get("results", []):
                         mem = r["memory"]
-                        if mem not in user_mems:
+                        if mem not in key_texts and mem not in user_mems:
                             labeled_mem = f"[About {p_name}]: {mem}"
                             if labeled_mem not in user_mems:
                                 user_mems.append(labeled_mem)
                 except Exception as e:
-                    print(f"[mem0] Error searching participant {p_id}: {e}")
+                    logger.warning(f"Error searching participant {p_id}: {e}")
 
         # Extract contact-related memories with source info
         for r in user_res.get("results", []):
@@ -379,18 +473,78 @@ class MemoryManager:
                 if mem_text not in user_mems:
                     user_mems.append(mem_text)
 
-        # Limit memories to reduce token usage (keep most relevant)
-        if len(user_mems) > MAX_MEMORIES_PER_TYPE:
-            user_mems = user_mems[:MAX_MEMORIES_PER_TYPE]
+        # Limit non-key memories to reduce token usage
+        # Key memories (at start) are always kept, limit the rest
+        num_key = len(key_mems)
+        if len(user_mems) > num_key + MAX_MEMORIES_PER_TYPE:
+            user_mems = user_mems[:num_key + MAX_MEMORIES_PER_TYPE]
         if len(proj_mems) > MAX_MEMORIES_PER_TYPE:
             proj_mems = proj_mems[:MAX_MEMORIES_PER_TYPE]
 
         if user_mems or proj_mems:
-            print(
-                f"[mem0] Found {len(user_mems)} user memories, "
+            logger.info(
+                f"Found {len(key_mems)} key, "
+                f"{len(user_mems) - len(key_mems)} user, "
                 f"{len(proj_mems)} project memories"
             )
+            # Send Discord embed with memory summary
+            self._send_memory_embed(
+                user_id=user_id,
+                key_count=len(key_mems),
+                user_count=len(user_mems) - len(key_mems),
+                proj_count=len(proj_mems),
+                sample_memories=user_mems[:3] if user_mems else [],
+            )
         return user_mems, proj_mems
+
+    def _send_memory_embed(
+        self,
+        user_id: str,
+        key_count: int,
+        user_count: int,
+        proj_count: int,
+        sample_memories: list[str],
+    ) -> None:
+        """Send a Discord embed with memory retrieval summary."""
+        discord_handler = get_discord_handler()
+        if not discord_handler:
+            return
+
+        total = key_count + user_count + proj_count
+        if total == 0:
+            return
+
+        # Format memory samples (truncate for embed)
+        sample_text = ""
+        if sample_memories:
+            samples = []
+            for mem in sample_memories[:3]:
+                # Remove [KEY] prefix for cleaner display
+                clean_mem = mem.replace("[KEY] ", "")
+                if len(clean_mem) > 60:
+                    clean_mem = clean_mem[:57] + "..."
+                samples.append(f"• {clean_mem}")
+            sample_text = "\n".join(samples)
+
+        # Build embed fields
+        fields = [
+            {"name": "Key", "value": str(key_count), "inline": True},
+            {"name": "User", "value": str(user_count), "inline": True},
+            {"name": "Project", "value": str(proj_count), "inline": True},
+        ]
+
+        # Extract short user ID for footer
+        _, short_id = self.parse_user_id(user_id)
+        if len(short_id) > 8:
+            short_id = short_id[:8]
+
+        discord_handler.queue_embed(
+            title=f"Memory Retrieval ({total} total)",
+            description=sample_text if sample_text else None,
+            fields=fields,
+            footer=f"user: {short_id}",
+            tag="mem0",
+        )
 
     def add_to_mem0(
         self,
@@ -400,6 +554,7 @@ class MemoryManager:
         user_message: str,
         assistant_reply: str,
         participants: list[dict] | None = None,
+        is_dm: bool = False,
     ) -> None:
         """Send conversation slice to mem0 for memory extraction.
 
@@ -408,8 +563,9 @@ class MemoryManager:
             project_id: Project context
             recent_msgs: Recent message history
             user_message: Current user message
-            assistant_reply: Clarissa's response
+            assistant_reply: Clara's response
             participants: List of {"id": str, "name": str} for people mentioned
+            is_dm: Whether this is a DM conversation (stores as "personal" vs "project")
         """
         from config.mem0 import MEM0
 
@@ -430,7 +586,12 @@ class MemoryManager:
         ]
 
         # Store with participant metadata for cross-user search
-        metadata = {"project_id": project_id}
+        # Tag source type: "personal" for DMs, "project" for server channels
+        source_type = "personal" if is_dm else "project"
+        metadata = {
+            "project_id": project_id,
+            "source_type": source_type,
+        }
         if participants:
             metadata["participant_ids"] = [
                 p.get("id") for p in participants if p.get("id")
@@ -439,12 +600,158 @@ class MemoryManager:
                 p.get("name") for p in participants if p.get("name")
             ]
 
-        result = MEM0.add(
-            history_slice,
-            user_id=user_id,
-            metadata=metadata,
+        try:
+            result = MEM0.add(
+                history_slice,
+                user_id=user_id,
+                agent_id=self.agent_id,
+                metadata=metadata,
+            )
+            # Check for errors in result
+            if isinstance(result, dict):
+                if result.get("error"):
+                    logger.error(f"Error adding memories: {result.get('error')}")
+                elif result.get("results"):
+                    count = len(result.get("results", []))
+                    logger.info(f"Added {count} memories")
+                    # Send Discord embed for memory extraction
+                    self._send_memory_added_embed(
+                        user_id=user_id,
+                        count=count,
+                        source_type=source_type,
+                        results=result.get("results", []),
+                    )
+                else:
+                    logger.debug(f"Add result: {result}")
+            else:
+                logger.debug(f"Added memories: {result}")
+        except Exception as e:
+            logger.error(f"Error adding memories: {e}", exc_info=True)
+
+    def _send_memory_added_embed(
+        self,
+        user_id: str,
+        count: int,
+        source_type: str,
+        results: list[dict],
+    ) -> None:
+        """Send a Discord embed when memories are extracted and stored."""
+        discord_handler = get_discord_handler()
+        if not discord_handler or count == 0:
+            return
+
+        # Format memory samples (truncate for embed)
+        sample_text = ""
+        if results:
+            samples = []
+            for r in results[:3]:
+                mem = r.get("memory", "")
+                if len(mem) > 60:
+                    mem = mem[:57] + "..."
+                samples.append(f"• {mem}")
+            sample_text = "\n".join(samples)
+
+        # Extract short user ID for footer
+        _, short_id = self.parse_user_id(user_id)
+        if len(short_id) > 8:
+            short_id = short_id[:8]
+
+        discord_handler.queue_embed(
+            title=f"Memory Extracted ({count} new)",
+            description=sample_text if sample_text else None,
+            fields=[{"name": "Source", "value": source_type, "inline": True}],
+            footer=f"user: {short_id}",
+            tag="mem0",
         )
-        print(f"[mem0] Added memories: {result}")
+
+    # ---------- emotional context ----------
+
+    def fetch_emotional_context(
+        self,
+        user_id: str,
+        limit: int = 3,
+        max_age_days: int = 7,
+    ) -> list[dict]:
+        """
+        Fetch recent emotional context memories for session warmth.
+
+        Retrieves emotional summaries from recent conversations to help
+        calibrate tone at session start.
+
+        Args:
+            user_id: The user to fetch emotional context for
+            limit: Maximum number of emotional context memories to return
+            max_age_days: Only return context from the last N days
+
+        Returns:
+            List of emotional context dicts with keys:
+            - memory: The formatted emotional summary text
+            - timestamp: When the conversation ended
+            - arc: Emotional arc (stable, improving, declining, volatile)
+            - energy: Energy level (stressed, focused, casual, etc.)
+            - channel_name: Where the conversation happened
+            - is_dm: Whether it was a DM
+        """
+        from datetime import timedelta
+
+        from config.mem0 import MEM0
+
+        if MEM0 is None:
+            return []
+
+        try:
+            # Search for emotional_context memories
+            results = MEM0.get_all(
+                user_id=user_id,
+                agent_id=self.agent_id,
+                limit=limit * 2,  # Fetch extra to filter by age
+            )
+
+            emotional_contexts = []
+            cutoff = datetime.now(UTC) - timedelta(days=max_age_days)
+
+            for r in results.get("results", []):
+                metadata = r.get("metadata", {})
+
+                # Only include emotional_context type memories
+                if metadata.get("memory_type") != "emotional_context":
+                    continue
+
+                # Parse and filter by timestamp
+                timestamp_str = metadata.get("timestamp")
+                if timestamp_str:
+                    try:
+                        timestamp = datetime.fromisoformat(
+                            timestamp_str.replace("Z", "+00:00")
+                        )
+                        if timestamp < cutoff:
+                            continue
+                    except (ValueError, TypeError):
+                        timestamp = None
+                else:
+                    timestamp = None
+
+                emotional_contexts.append({
+                    "memory": r.get("memory", ""),
+                    "timestamp": timestamp_str,
+                    "arc": metadata.get("emotional_arc", "stable"),
+                    "energy": metadata.get("energy_level", "neutral"),
+                    "channel_name": metadata.get("channel_name", "unknown"),
+                    "is_dm": metadata.get("is_dm", False),
+                    "ending_sentiment": metadata.get("ending_sentiment", 0.0),
+                })
+
+            # Sort by timestamp descending (most recent first)
+            emotional_contexts.sort(
+                key=lambda x: x.get("timestamp") or "",
+                reverse=True,
+            )
+
+            return emotional_contexts[:limit]
+
+        except Exception as e:
+            logger.error(f"Error fetching emotional context: {e}", exc_info=True)
+            return []
 
     # ---------- prompt building ----------
 
@@ -455,6 +762,8 @@ class MemoryManager:
         thread_summary: str | None,
         recent_msgs: list["Message"],
         user_message: str,
+        emotional_context: list[dict] | None = None,
+        recurring_topics: list[dict] | None = None,
     ) -> list[dict[str, str]]:
         """Build the full prompt for the LLM.
 
@@ -464,6 +773,8 @@ class MemoryManager:
             thread_summary: Optional thread summary
             recent_msgs: Recent messages in the conversation
             user_message: Current user message
+            emotional_context: Optional emotional context from recent sessions
+            recurring_topics: Optional recurring topic patterns from fetch_topic_recurrence
 
         Returns:
             List of messages ready for LLM
@@ -483,6 +794,18 @@ class MemoryManager:
             proj_block = "\n".join(f"- {m}" for m in proj_mems)
             context_parts.append(f"PROJECT MEMORIES:\n{proj_block}")
 
+        # Add emotional context from recent sessions (for tone calibration)
+        if emotional_context:
+            emotional_block = self._format_emotional_context(emotional_context)
+            if emotional_block:
+                context_parts.append(f"RECENT EMOTIONAL CONTEXT:\n{emotional_block}")
+
+        # Add recurring topic patterns (for awareness of what keeps coming up)
+        if recurring_topics:
+            topic_block = self._format_topic_recurrence(recurring_topics)
+            if topic_block:
+                context_parts.append(f"RECURRING TOPICS:\n{topic_block}")
+
         if thread_summary:
             context_parts.append(f"THREAD SUMMARY:\n{thread_summary}")
 
@@ -493,8 +816,166 @@ class MemoryManager:
         if context_parts:
             messages.append({"role": "system", "content": "\n\n".join(context_parts)})
 
+        # Add recent messages (only user messages get timestamps to avoid Clara mimicking the format)
         for m in recent_msgs:
-            messages.append({"role": m.role, "content": m.content})
+            if m.role == "user":
+                timestamp = _format_message_timestamp(getattr(m, "created_at", None))
+                if timestamp:
+                    content = f"[{timestamp}] {m.content}"
+                else:
+                    content = m.content
+            else:
+                content = m.content
+            messages.append({"role": m.role, "content": content})
 
         messages.append({"role": "user", "content": user_message})
         return messages
+
+    def _format_emotional_context(self, emotional_context: list[dict]) -> str:
+        """
+        Format emotional context for inclusion in the system prompt.
+
+        Only includes non-neutral contexts to avoid noise. Includes channel
+        hints so Clara understands the source (work channel vs personal DM).
+
+        Args:
+            emotional_context: List of emotional context dicts from fetch_emotional_context
+
+        Returns:
+            Formatted string for the prompt, or empty string if nothing meaningful
+        """
+        if not emotional_context:
+            return ""
+
+        lines = []
+        for ctx in emotional_context:
+            memory = ctx.get("memory", "")
+            arc = ctx.get("arc", "stable")
+            energy = ctx.get("energy", "neutral")
+            channel_name = ctx.get("channel_name", "")
+            is_dm = ctx.get("is_dm", False)
+            timestamp_str = ctx.get("timestamp", "")
+
+            # Skip stable/neutral contexts - not worth mentioning
+            if arc == "stable" and energy in ("neutral", "casual"):
+                continue
+
+            # Format channel hint
+            if is_dm:
+                channel_hint = "DM"
+            elif channel_name:
+                channel_hint = channel_name if channel_name.startswith("#") else f"#{channel_name}"
+            else:
+                channel_hint = "unknown"
+
+            # Format time hint
+            time_hint = self._format_relative_time(timestamp_str)
+
+            # Build the line with channel and time hints
+            if time_hint:
+                lines.append(f"- [{channel_hint}, {time_hint}] {memory}")
+            else:
+                lines.append(f"- [{channel_hint}] {memory}")
+
+        return "\n".join(lines) if lines else ""
+
+    def _format_relative_time(self, timestamp_str: str | None) -> str:
+        """Format a timestamp as relative time (e.g., '2h ago', 'yesterday')."""
+        if not timestamp_str:
+            return ""
+
+        try:
+            timestamp = datetime.fromisoformat(timestamp_str.replace("Z", "+00:00"))
+            now = datetime.now(UTC)
+            delta = now - timestamp
+
+            if delta.days > 1:
+                return f"{delta.days} days ago"
+            elif delta.days == 1:
+                return "yesterday"
+            elif delta.seconds >= 3600:
+                hours = delta.seconds // 3600
+                return f"{hours}h ago"
+            elif delta.seconds >= 60:
+                mins = delta.seconds // 60
+                return f"{mins}m ago"
+            else:
+                return "just now"
+        except (ValueError, TypeError):
+            return ""
+
+    def fetch_topic_recurrence(
+        self,
+        user_id: str,
+        lookback_days: int = 14,
+        min_mentions: int = 2,
+    ) -> list[dict]:
+        """
+        Fetch recurring topic patterns for a user.
+
+        Wrapper around topic_recurrence.fetch_topic_recurrence that uses
+        the MemoryManager's agent_id.
+
+        Args:
+            user_id: The user to fetch topic recurrence for
+            lookback_days: How many days to look back
+            min_mentions: Minimum mentions to consider a topic recurring
+
+        Returns:
+            List of recurring topic patterns with keys:
+            - topic: The topic name
+            - topic_type: "entity" or "theme"
+            - mention_count: Number of times mentioned
+            - first_mentioned: Relative time string
+            - last_mentioned: Relative time string
+            - sentiment_trend: "stable", "improving", or "declining"
+            - avg_emotional_weight: "light", "moderate", or "heavy"
+            - pattern_note: Natural language description
+            - channels: List of channel names where mentioned
+        """
+        from clarissa_core.topic_recurrence import fetch_topic_recurrence
+
+        return fetch_topic_recurrence(
+            user_id=user_id,
+            lookback_days=lookback_days,
+            min_mentions=min_mentions,
+            agent_id=self.agent_id,
+        )
+
+    def _format_topic_recurrence(self, recurring_topics: list[dict]) -> str:
+        """
+        Format recurring topics for inclusion in the system prompt.
+
+        Only includes significant patterns - topics that have been mentioned
+        multiple times with non-trivial emotional weight or sentiment changes.
+
+        Args:
+            recurring_topics: List of topic patterns from fetch_topic_recurrence
+
+        Returns:
+            Formatted string for the prompt, or empty string if nothing meaningful
+        """
+        if not recurring_topics:
+            return ""
+
+        lines = []
+        for topic in recurring_topics[:3]:  # Max 3 topics
+            topic_name = topic.get("topic", "")
+            pattern_note = topic.get("pattern_note", "")
+            mention_count = topic.get("mention_count", 0)
+            sentiment_trend = topic.get("sentiment_trend", "stable")
+            avg_weight = topic.get("avg_emotional_weight", "light")
+
+            # Skip topics that aren't significant enough
+            if mention_count < 2:
+                continue
+            if sentiment_trend == "stable" and avg_weight == "light":
+                continue
+
+            # Build the line
+            if pattern_note:
+                lines.append(f"- {topic_name}: {pattern_note}")
+            else:
+                lines.append(f"- {topic_name}: mentioned {mention_count} times")
+
+        return "\n".join(lines) if lines else ""

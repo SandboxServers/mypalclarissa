@@ -1,4 +1,4 @@
-"""Centralized configuration for Clarissa platform.
+"""Centralized configuration for Clara platform.
 
 Loads environment variables and provides a unified configuration interface.
 """
@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 
 
 @dataclass
-class ClarissaConfig:
-    """Configuration for Clarissa platform."""
+class ClaraConfig:
+    """Configuration for Clara platform."""
 
     # Database
     database_url: str = ""
@@ -28,7 +28,7 @@ class ClarissaConfig:
     openrouter_api_key: str = ""
     openrouter_model: str = "anthropic/claude-sonnet-4"
     openrouter_site: str = "http://localhost:3000"
-    openrouter_title: str = "MyPalClarissa"
+    openrouter_title: str = "MyPalClara"
 
     # NanoGPT
     nanogpt_api_key: str = ""
@@ -38,11 +38,6 @@ class ClarissaConfig:
     custom_openai_api_key: str = ""
     custom_openai_base_url: str = "https://api.openai.com/v1"
     custom_openai_model: str = "gpt-4o"
-
-    # Anthropic
-    anthropic_api_key: str = ""
-    anthropic_base_url: str = ""
-    anthropic_model: str = "claude-sonnet-4-20250514"
 
     # OpenAI (for embeddings)
     openai_api_key: str = ""
@@ -74,6 +69,7 @@ class ClarissaConfig:
     # Discord
     discord_bot_token: str = ""
     discord_client_id: str = ""
+    discord_allowed_servers: str = ""
     discord_allowed_channels: str = ""
     discord_allowed_roles: str = ""
     discord_max_messages: int = 25
@@ -92,7 +88,7 @@ class ClarissaConfig:
     tavily_api_key: str = ""
 
     # Local file storage
-    clarissa_files_dir: str = "./clarissa_files"
+    clara_files_dir: str = "./clara_files"
     clara_max_file_size: int = 50 * 1024 * 1024  # 50MB
 
     # Email
@@ -105,18 +101,18 @@ class ClarissaConfig:
     base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
 
     # Singleton instance
-    _instance: ClassVar["ClarissaConfig | None"] = None
+    _instance: ClassVar["ClaraConfig | None"] = None
     _initialized: ClassVar[bool] = False
 
     @classmethod
-    def get_instance(cls) -> "ClarissaConfig":
+    def get_instance(cls) -> "ClaraConfig":
         """Get the singleton configuration instance."""
         if cls._instance is None:
             cls._instance = cls._load_from_env()
         return cls._instance
 
     @classmethod
-    def _load_from_env(cls) -> "ClarissaConfig":
+    def _load_from_env(cls) -> "ClaraConfig":
         """Load configuration from environment variables."""
         load_dotenv()
 
@@ -130,7 +126,7 @@ class ClarissaConfig:
             openrouter_api_key=os.getenv("OPENROUTER_API_KEY", ""),
             openrouter_model=os.getenv("OPENROUTER_MODEL", "anthropic/claude-sonnet-4"),
             openrouter_site=os.getenv("OPENROUTER_SITE", "http://localhost:3000"),
-            openrouter_title=os.getenv("OPENROUTER_TITLE", "MyPalClarissa"),
+            openrouter_title=os.getenv("OPENROUTER_TITLE", "MyPalClara"),
             # NanoGPT
             nanogpt_api_key=os.getenv("NANOGPT_API_KEY", ""),
             nanogpt_model=os.getenv(
@@ -142,10 +138,6 @@ class ClarissaConfig:
                 "CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1"
             ),
             custom_openai_model=os.getenv("CUSTOM_OPENAI_MODEL", "gpt-4o"),
-            # Anthropic
-            anthropic_api_key=os.getenv("ANTHROPIC_API_KEY", ""),
-            anthropic_base_url=os.getenv("ANTHROPIC_BASE_URL", ""),
-            anthropic_model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
             # OpenAI
             openai_api_key=os.getenv("OPENAI_API_KEY", ""),
             # Mem0 Provider
@@ -172,6 +164,7 @@ class ClarissaConfig:
             # Discord
             discord_bot_token=os.getenv("DISCORD_BOT_TOKEN", ""),
             discord_client_id=os.getenv("DISCORD_CLIENT_ID", ""),
+            discord_allowed_servers=os.getenv("DISCORD_ALLOWED_SERVERS", ""),
             discord_allowed_channels=os.getenv("DISCORD_ALLOWED_CHANNELS", ""),
             discord_allowed_roles=os.getenv("DISCORD_ALLOWED_ROLES", ""),
             discord_max_messages=int(os.getenv("DISCORD_MAX_MESSAGES", "25")),
@@ -194,26 +187,26 @@ class ClarissaConfig:
             # Web search
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
             # Local file storage
-            clarissa_files_dir=os.getenv("CLARISSA_FILES_DIR", "./clarissa_files"),
+            clara_files_dir=os.getenv("CLARA_FILES_DIR", "./clara_files"),
             clara_max_file_size=int(
-                os.getenv("CLARISSA_MAX_FILE_SIZE", str(50 * 1024 * 1024))
+                os.getenv("CLARA_MAX_FILE_SIZE", str(50 * 1024 * 1024))
             ),
             # Email
-            clara_email_address=os.getenv("CLARISSA_EMAIL_ADDRESS", ""),
-            clara_email_password=os.getenv("CLARISSA_EMAIL_PASSWORD", ""),
-            clara_email_notify_user=os.getenv("CLARISSA_EMAIL_NOTIFY_USER", ""),
-            clara_email_notify=os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower()
+            clara_email_address=os.getenv("CLARA_EMAIL_ADDRESS", ""),
+            clara_email_password=os.getenv("CLARA_EMAIL_PASSWORD", ""),
+            clara_email_notify_user=os.getenv("CLARA_EMAIL_NOTIFY_USER", ""),
+            clara_email_notify=os.getenv("CLARA_EMAIL_NOTIFY", "false").lower()
             == "true",
         )
 
 
-def get_config() -> ClarissaConfig:
+def get_config() -> ClaraConfig:
     """Get the current configuration."""
-    return ClarissaConfig.get_instance()
+    return ClaraConfig.get_instance()
 
 
 def init_platform() -> None:
-    """Initialize the Clarissa platform.
+    """Initialize the Clara platform.
 
     Call this once at application startup to:
     1. Load configuration
@@ -222,15 +215,15 @@ def init_platform() -> None:
     4. Initialize ToolRegistry singleton
     5. Optionally load initial profile
     """
-    from clarissa_core.memory import MemoryManager, load_initial_profile
     from clarissa_core.llm import make_llm
+    from clarissa_core.memory import MemoryManager, load_initial_profile
     from clarissa_core.tools import ToolRegistry
     from db.connection import init_db
 
     config = get_config()
 
     # Mark as initialized
-    if ClarissaConfig._initialized:
+    if ClaraConfig._initialized:
         print("[clarissa_core] Platform already initialized, skipping")
         return
 
@@ -250,5 +243,5 @@ def init_platform() -> None:
     if not config.skip_profile_load:
         load_initial_profile(config.user_id)
 
-    ClarissaConfig._initialized = True
+    ClaraConfig._initialized = True
     print("[clarissa_core] Platform initialized successfully")

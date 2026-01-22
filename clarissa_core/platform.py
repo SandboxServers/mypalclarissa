@@ -1,4 +1,4 @@
-"""Platform abstraction layer for Clarissa.
+"""Platform abstraction layer for Clara.
 
 Defines common interfaces for different communication platforms (Discord, API, Slack, etc.)
 """
@@ -74,7 +74,7 @@ class PlatformAdapter(ABC):
     """Base class for platform adapters.
 
     Each platform (Discord, Slack, API) should implement this interface
-    to integrate with the Clarissa core.
+    to integrate with the Clara core.
     """
 
     @property
