@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 
 from dotenv import load_dotenv
-from mem0 import Memory
+
+# Use vendored mem0 with base_url fix for Anthropic
+from vendor.mem0 import Memory
 
 load_dotenv()
 
@@ -36,6 +38,10 @@ PROVIDER_DEFAULTS = {
     "openai-custom": {
         "base_url": os.getenv("CUSTOM_OPENAI_BASE_URL", "https://api.openai.com/v1"),
         "api_key_env": "CUSTOM_OPENAI_API_KEY",
+    },
+    "anthropic": {
+        "base_url": os.getenv("ANTHROPIC_BASE_URL"),  # None = default API
+        "api_key_env": "ANTHROPIC_API_KEY",
     },
 }
 
@@ -165,8 +171,22 @@ def _get_llm_config() -> dict | None:
 
     print(f"[mem0] Provider: {MEM0_PROVIDER}")
     print(f"[mem0] Model: {MEM0_MODEL}")
-    print(f"[mem0] Base URL: {base_url}")
+    if base_url:
+        print(f"[mem0] Base URL: {base_url}")
 
+    # Anthropic uses native SDK with anthropic_base_url
+    if MEM0_PROVIDER == "anthropic":
+        return {
+            "provider": "anthropic",
+            "config": {
+                "model": MEM0_MODEL,
+                "api_key": api_key,
+                "anthropic_base_url": base_url,  # Now works with our vendored fix!
+                "temperature": 0,
+            },
+        }
+
+    # All other providers use OpenAI-compatible endpoints
     return {
         "provider": "openai",
         "config": {
@@ -282,6 +302,31 @@ OUTPUT FORMAT (JSON only):
 }
 """
 
+# Collection name - explicit env var to prevent accidental changes
+MEM0_COLLECTION_NAME = os.getenv("MEM0_COLLECTION_NAME", "clarissa_memories")
+
+# Retrieval criteria for weighted memory scoring
+# DISABLED: This causes an LLM call for EVERY search to re-rank memories,
+# adding significant latency. Vector similarity scoring is sufficient.
+# To re-enable, uncomment and add "retrieval_criteria": RETRIEVAL_CRITERIA to config.
+# RETRIEVAL_CRITERIA = [
+#     {
+#         "name": "importance",
+#         "description": "How fundamental and persistent this fact is. High for core identity (name, relationships, profession), low for temporary plans or opinions.",
+#         "weight": 3.0,
+#     },
+#     {
+#         "name": "relevance",
+#         "description": "How directly relevant this memory is to the current query context.",
+#         "weight": 2.0,
+#     },
+#     {
+#         "name": "recency_value",
+#         "description": "How valuable recent information is for this memory. High for time-sensitive facts, low for evergreen personal traits.",
+#         "weight": 1.0,
+#     },
+# ]
+
 # Build vector store config - pgvector for production, Qdrant for local dev
 if MEM0_DATABASE_URL:
     # PostgreSQL with pgvector
@@ -294,10 +339,11 @@ if MEM0_DATABASE_URL:
         "provider": "pgvector",
         "config": {
             "connection_string": pgvector_url,
-            "collection_name": "clarissa_memories",
+            "collection_name": MEM0_COLLECTION_NAME,
         },
     }
     print(f"[mem0] Vector store: pgvector at {pgvector_url.split('@')[1] if '@' in pgvector_url else 'configured'}")
+    print(f"[mem0] Collection: {MEM0_COLLECTION_NAME}")
 else:
     # Fallback to Qdrant for local development
     vector_store_config = {
@@ -323,6 +369,7 @@ config = {
             "api_key": OPENAI_API_KEY,
         },
     },
+    # "retrieval_criteria": RETRIEVAL_CRITERIA,  # Disabled - causes slow LLM scoring on every search
 }
 
 # Only add LLM config if we have one

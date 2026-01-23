@@ -48,14 +48,6 @@ OFFICIAL_MCP_SERVERS = [
         replaces_tool="github",
     ),
     OfficialMCPServer(
-        name="azure-devops",
-        description="Azure DevOps work items, repos, pipelines, and wiki",
-        npm_package="@azure-devops/mcp",
-        env_required=["AZURE_DEVOPS_ORG", "AZURE_DEVOPS_PAT"],
-        env_optional=["AZURE_DEVOPS_TENANT"],
-        replaces_tool="azure_devops",
-    ),
-    OfficialMCPServer(
         name="playwright",
         description="Browser automation using Playwright accessibility tree",
         npm_package="@playwright/mcp",
@@ -76,7 +68,7 @@ OFFICIAL_MCP_SERVERS = [
         description="Secure file operations with configurable access controls",
         npm_package="@modelcontextprotocol/server-filesystem",
         env_required=[],
-        env_optional=["CLARA_FILES_DIR"],  # Directories to allow access to
+        env_optional=["CLARISSA_FILES_DIR"],  # Directories to allow access to
         replaces_tool=None,  # Doesn't replace local_files (missing S3, per-user storage, sandbox integration)
     ),
 ]
@@ -198,18 +190,9 @@ async def setup_official_mcp_servers() -> dict[str, bool]:
             # Special handling for server args based on type
             args = None
             if server_config.name == "filesystem":
-                # Allow access to CLARA_FILES_DIR or current directory
-                files_dir = os.getenv("CLARA_FILES_DIR", "./clara_files")
+                # Allow access to CLARISSA_FILES_DIR or current directory
+                files_dir = os.getenv("CLARISSA_FILES_DIR", "./clarissa_files")
                 args = [files_dir]
-            elif server_config.name == "azure-devops":
-                # Azure DevOps requires organization as positional arg and auth mode
-                org = os.getenv("AZURE_DEVOPS_ORG")
-                if org:
-                    args = [org, "--authentication", "env"]
-                    # Add tenant if provided
-                    tenant = os.getenv("AZURE_DEVOPS_TENANT")
-                    if tenant:
-                        args.extend(["--tenant", tenant])
 
             # Install the server
             logger.info(f"[core_tools] Installing official MCP server: {server_config.name}")

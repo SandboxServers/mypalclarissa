@@ -10,7 +10,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      - "5442:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clarissa -d clarissa_main"]
       interval: 10s
@@ -28,7 +28,7 @@ services:
     volumes:
       - postgres-vectors-data:/var/lib/postgresql/data
     ports:
-      - "5433:5432"
+      - "5443:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U clarissa -d clarissa_vectors"]
       interval: 10s
@@ -36,132 +36,24 @@ services:
       retries: 5
     restart: unless-stopped
 
-  backend:
-    image: ${REGISTRY:-}mypalclarissa-backend:latest
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: mypalclarissa-backend
-    profiles:
-      - backend
-      - full
-    ports:
-      - "8000:8000"
-    environment:
-      # LLM Provider
-      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
-      # OpenRouter (when LLM_PROVIDER=openrouter)
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
-      - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
-      - OPENROUTER_TITLE=${OPENROUTER_TITLE:-MyPalClarissa}
-      # NanoGPT (when LLM_PROVIDER=nanogpt)
-      - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
-      - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
-      - NANOGPT_MEM0_MODEL=${NANOGPT_MEM0_MODEL:-openai/gpt-oss-120b}
-      # Custom OpenAI (when LLM_PROVIDER=openai)
-      - CUSTOM_OPENAI_API_KEY=${CUSTOM_OPENAI_API_KEY:-}
-      - CUSTOM_OPENAI_BASE_URL=${CUSTOM_OPENAI_BASE_URL:-https://api.openai.com/v1}
-      - CUSTOM_OPENAI_MODEL=${CUSTOM_OPENAI_MODEL:-gpt-4o}
-      # Anthropic (when LLM_PROVIDER=anthropic)
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
-      - ANTHROPIC_MODEL_HIGH=${ANTHROPIC_MODEL_HIGH:-}
-      - ANTHROPIC_MODEL_MID=${ANTHROPIC_MODEL_MID:-}
-      - ANTHROPIC_MODEL_LOW=${ANTHROPIC_MODEL_LOW:-}
-      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
-      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
-      # OpenAI (for embeddings)
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-      # PostgreSQL (hardcoded for Docker - ignores .env localhost values)
-      - DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres:5432/clarissa_main
-      - MEM0_DATABASE_URL=postgresql://clarissa:${POSTGRES_PASSWORD:-clarissa}@postgres-vectors:5432/clarissa_vectors
-      # Mem0 Provider
-      - MEM0_PROVIDER=${MEM0_PROVIDER:-openrouter}
-      - MEM0_MODEL=${MEM0_MODEL:-openai/gpt-4o-mini}
-      # User config
-      - USER_ID=${USER_ID:-demo-user}
-      - DEFAULT_PROJECT=${DEFAULT_PROJECT:-Default Project}
-    volumes:
-      - mypalclarissa-data:/data
-      - ./inputs/user_profile.txt:/app/inputs/user_profile.txt:ro
-      - ./${BOT_PERSONALITY_FILE:-personality.txt}:/app/${BOT_PERSONALITY_FILE:-personality.txt}:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-      postgres-vectors:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-    restart: unless-stopped
-
-  frontend:
-    image: ${REGISTRY:-}mypalclarissa-frontend:latest
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: mypalclarissa-frontend
-    profiles:
-      - frontend
-      - full
-    ports:
-      - "3000:3000"
-    environment:
-      # LLM Provider
-      - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
-      # OpenRouter (when LLM_PROVIDER=openrouter)
-      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
-      - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
-      - OPENROUTER_SITE=${OPENROUTER_SITE:-http://localhost:3000}
-      - OPENROUTER_TITLE=${OPENROUTER_TITLE:-MyPalClarissa}
-      # NanoGPT (when LLM_PROVIDER=nanogpt)
-      - NANOGPT_API_KEY=${NANOGPT_API_KEY:-}
-      - NANOGPT_MODEL=${NANOGPT_MODEL:-moonshotai/Kimi-K2-Instruct-0905}
-      # Anthropic (when LLM_PROVIDER=anthropic)
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
-      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
-      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
-      # Backend URL (server-side, internal Docker network)
-      - BACKEND_URL=http://backend:8000
-      # OpenAI (for embeddings - if needed)
-      - OPENAI_API_KEY=${OPENAI_API_KEY}
-    depends_on:
-      backend:
-        condition: service_healthy
-    healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 15s
-    restart: unless-stopped
-
-  # Discord bot (optional - run with: docker-compose --profile discord up)
+  # Discord bot
   discord-bot:
     image: ${REGISTRY:-}mypalclarissa-discord:latest
     build:
       context: .
       dockerfile: Dockerfile.discord
-      args:
-        - PLAYWRIGHT_ENABLED=${PLAYWRIGHT_ENABLED:-false}
     container_name: mypalclarissa-discord
     profiles:
       - discord
     ports:
-      - "8001:8001"  # Monitor dashboard
+      - "8011:8001"  # Monitor dashboard
     extra_hosts:
       - "host.docker.internal:host-gateway"  # Access host services (clewdr, etc.)
     environment:
       # Discord
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN}
       - DISCORD_CLIENT_ID=${DISCORD_CLIENT_ID:-}
+      - DISCORD_ALLOWED_SERVERS=${DISCORD_ALLOWED_SERVERS:-}
       - DISCORD_ALLOWED_CHANNELS=${DISCORD_ALLOWED_CHANNELS:-}
       - DISCORD_ALLOWED_ROLES=${DISCORD_ALLOWED_ROLES:-}
       - DISCORD_MAX_MESSAGES=${DISCORD_MAX_MESSAGES:-25}
@@ -175,6 +67,14 @@ services:
       - ORGANIC_DAILY_LIMIT=${ORGANIC_DAILY_LIMIT:-50}
       # LLM Provider
       - LLM_PROVIDER=${LLM_PROVIDER:-openrouter}
+      # Anthropic (native)
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-5}
+      - ANTHROPIC_MODEL_HIGH=${ANTHROPIC_MODEL_HIGH:-claude-opus-4-5}
+      - ANTHROPIC_MODEL_MID=${ANTHROPIC_MODEL_MID:-claude-sonnet-4-5}
+      - ANTHROPIC_MODEL_LOW=${ANTHROPIC_MODEL_LOW:-claude-haiku-4-5}
+      - MODEL_TIER=${MODEL_TIER:-mid}
       # OpenRouter
       - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
       - OPENROUTER_MODEL=${OPENROUTER_MODEL:-anthropic/claude-sonnet-4}
@@ -187,15 +87,6 @@ services:
       - CUSTOM_OPENAI_API_KEY=${CUSTOM_OPENAI_API_KEY:-}
       - CUSTOM_OPENAI_BASE_URL=${CUSTOM_OPENAI_BASE_URL:-https://api.openai.com/v1}
       - CUSTOM_OPENAI_MODEL=${CUSTOM_OPENAI_MODEL:-gpt-4o}
-      # Anthropic (when LLM_PROVIDER=anthropic)
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
-      - ANTHROPIC_BASE_URL=${ANTHROPIC_BASE_URL:-}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
-      - ANTHROPIC_MODEL_HIGH=${ANTHROPIC_MODEL_HIGH:-}
-      - ANTHROPIC_MODEL_MID=${ANTHROPIC_MODEL_MID:-}
-      - ANTHROPIC_MODEL_LOW=${ANTHROPIC_MODEL_LOW:-}
-      - CF_ACCESS_CLIENT_ID=${CF_ACCESS_CLIENT_ID:-}
-      - CF_ACCESS_CLIENT_SECRET=${CF_ACCESS_CLIENT_SECRET:-}
       # Tool calling (set TOOL_FORMAT=claude for Claude proxies like clewdr)
       - TOOL_API_KEY=${TOOL_API_KEY:-}
       - TOOL_BASE_URL=${TOOL_BASE_URL:-}
@@ -222,8 +113,6 @@ services:
       - CLARISSA_EMAIL_PASSWORD=${CLARISSA_EMAIL_PASSWORD:-}
       - CLARISSA_EMAIL_NOTIFY_USER=${CLARISSA_EMAIL_NOTIFY_USER:-}
       - CLARISSA_EMAIL_NOTIFY=${CLARISSA_EMAIL_NOTIFY:-false}
-      # API URL for dashboard cross-service stats (optional)
-      - API_URL=http://backend:8000
       # Graph memory (optional)
       - ENABLE_GRAPH_MEMORY=${ENABLE_GRAPH_MEMORY:-false}
       - GRAPH_STORE_PROVIDER=${GRAPH_STORE_PROVIDER:-neo4j}
@@ -235,11 +124,11 @@ services:
       - FAST_LLM_MODEL=${FAST_LLM_MODEL:-}
       # Docker sandbox
       - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
-      # E2B sandbox (alternative to Docker)
-      - E2B_API_KEY=${E2B_API_KEY:-}
-      - E2B_TIMEOUT=${E2B_TIMEOUT:-300}
-      # Playwright browser automation (disabled by default for faster builds)
-      - PLAYWRIGHT_ENABLED=${PLAYWRIGHT_ENABLED:-false}
+      # Remote sandbox (VPS)
+      - SANDBOX_MODE=${SANDBOX_MODE:-auto}
+      - SANDBOX_API_URL=${SANDBOX_API_URL:-}
+      - SANDBOX_API_KEY=${SANDBOX_API_KEY:-}
+      - SANDBOX_TIMEOUT=${SANDBOX_TIMEOUT:-60}
       # S3 storage (optional)
       - S3_ENABLED=${S3_ENABLED:-false}
       - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-}
@@ -252,27 +141,15 @@ services:
       # Azure DevOps integration
       - AZURE_DEVOPS_ORG=${AZURE_DEVOPS_ORG:-}
       - AZURE_DEVOPS_PAT=${AZURE_DEVOPS_PAT:-}
-      # KIRA-inspired features
-      - AUTO_TIER_ENABLED=${AUTO_TIER_ENABLED:-true}
-      - AUTO_TIER_SHOW_SELECTION=${AUTO_TIER_SHOW_SELECTION:-false}
-      # Task planning
-      - PLANNING_FILES_ENABLED=${PLANNING_FILES_ENABLED:-true}
-      # Proactive monitoring
-      - PROACTIVE_ENABLED=${PROACTIVE_ENABLED:-true}
-      - PROACTIVE_QUIET_START=${PROACTIVE_QUIET_START:-22}
-      - PROACTIVE_QUIET_END=${PROACTIVE_QUIET_END:-8}
-      - GITHUB_CHECKER_ENABLED=${GITHUB_CHECKER_ENABLED:-true}
-      - GITHUB_CHECKER_INTERVAL=${GITHUB_CHECKER_INTERVAL:-15}
-      - ADO_CHECKER_ENABLED=${ADO_CHECKER_ENABLED:-true}
-      - ADO_CHECKER_INTERVAL=${ADO_CHECKER_INTERVAL:-15}
-      - EMAIL_CHECKER_ENABLED=${EMAIL_CHECKER_ENABLED:-true}
-      - EMAIL_CHECKER_INTERVAL=${EMAIL_CHECKER_INTERVAL:-5}
+      # MCP Plugin System
+      - MCP_SERVERS_DIR=/app/mcp_servers
       # General
       - SKIP_PROFILE_LOAD=true
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     volumes:
       - mypalclarissa-data:/data
       - mypalclarissa-files:/app/clarissa_files
+      - ${MCP_SERVERS_PATH:-./mcp_servers}:/app/mcp_servers  # MCP server files (cloned repos, etc.)
       - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock  # For Docker sandbox
       - ./inputs/user_profile.txt:/app/inputs/user_profile.txt:ro
       - ./${BOT_PERSONALITY_FILE:-personality.txt}:/app/${BOT_PERSONALITY_FILE:-personality.txt}:ro

@@ -88,14 +88,14 @@ class ClaraConfig:
     tavily_api_key: str = ""
 
     # Local file storage
-    clara_files_dir: str = "./clara_files"
-    clara_max_file_size: int = 50 * 1024 * 1024  # 50MB
+    clarissa_files_dir: str = "./clarissa_files"
+    clarissa_max_file_size: int = 50 * 1024 * 1024  # 50MB
 
     # Email
-    clara_email_address: str = ""
-    clara_email_password: str = ""
-    clara_email_notify_user: str = ""
-    clara_email_notify: bool = False
+    clarissa_email_address: str = ""
+    clarissa_email_password: str = ""
+    clarissa_email_notify_user: str = ""
+    clarissa_email_notify: bool = False
 
     # Paths
     base_dir: Path = field(default_factory=lambda: Path(__file__).parent.parent)
@@ -187,15 +187,15 @@ class ClaraConfig:
             # Web search
             tavily_api_key=os.getenv("TAVILY_API_KEY", ""),
             # Local file storage
-            clara_files_dir=os.getenv("CLARA_FILES_DIR", "./clara_files"),
-            clara_max_file_size=int(
-                os.getenv("CLARA_MAX_FILE_SIZE", str(50 * 1024 * 1024))
+            clarissa_files_dir=os.getenv("CLARISSA_FILES_DIR", "./clarissa_files"),
+            clarissa_max_file_size=int(
+                os.getenv("CLARISSA_MAX_FILE_SIZE", str(50 * 1024 * 1024))
             ),
             # Email
-            clara_email_address=os.getenv("CLARA_EMAIL_ADDRESS", ""),
-            clara_email_password=os.getenv("CLARA_EMAIL_PASSWORD", ""),
-            clara_email_notify_user=os.getenv("CLARA_EMAIL_NOTIFY_USER", ""),
-            clara_email_notify=os.getenv("CLARA_EMAIL_NOTIFY", "false").lower()
+            clarissa_email_address=os.getenv("CLARISSA_EMAIL_ADDRESS", ""),
+            clarissa_email_password=os.getenv("CLARISSA_EMAIL_PASSWORD", ""),
+            clarissa_email_notify_user=os.getenv("CLARISSA_EMAIL_NOTIFY_USER", ""),
+            clarissa_email_notify=os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower()
             == "true",
         )
 

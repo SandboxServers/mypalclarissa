@@ -1,0 +1,617 @@
+{
+  "name": "clara-tools",
+  "source_type": "local",
+  "id": "d276ae98-def6-4adb-a4b3-9cd3217bca7d",
+  "display_name": "Clara Native Tools",
+  "source_url": "/Users/heidornj/Code/mypalclara/clara-mcp-server/target/release/clara-mcp-server",
+  "transport": "stdio",
+  "command": "/Users/heidornj/Code/mypalclara/clara-mcp-server/target/release/clara-mcp-server",
+  "args": [],
+  "cwd": null,
+  "env": {},
+  "endpoint_url": null,
+  "docker_config": {},
+  "enabled": true,
+  "status": "running",
+  "last_error": null,
+  "last_error_at": null,
+  "tool_count": 28,
+  "tools": [
+    {
+      "name": "google_sheets_read",
+      "description": "Read data from a Google Sheets range",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "range": {
+            "description": "Range in A1 notation",
+            "type": "string"
+          },
+          "spreadsheet_id": {
+            "description": "Spreadsheet ID",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "spreadsheet_id",
+          "range"
+        ],
+        "title": "SheetsReadParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "mcp_status",
+      "description": "Get MCP server status",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "sandbox_read_file",
+      "description": "Read a file from the sandbox",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "path": {
+            "description": "File or directory path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "PathParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "ors_add_note",
+      "description": "Add an ORS note",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "category": {
+            "description": "Category (optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "content": {
+            "description": "Note content",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "content"
+        ],
+        "title": "AddNoteParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "upload_to_sandbox",
+      "description": "Upload a file from local storage to sandbox",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "local_filename": {
+            "description": "Local filename",
+            "type": "string"
+          },
+          "sandbox_path": {
+            "description": "Sandbox destination path (optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "local_filename",
+          "user_id"
+        ],
+        "title": "UploadToSandboxParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "mcp_list",
+      "description": "List installed MCP servers",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "send_message_to_channel",
+      "description": "Send a message to a Discord channel",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "channel_id": {
+            "description": "Discord channel ID",
+            "type": "string"
+          },
+          "message": {
+            "description": "Message content",
+            "type": "string"
+          }
+        },
+        "required": [
+          "channel_id",
+          "message"
+        ],
+        "title": "ChannelMessageParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "install_package",
+      "description": "Install a Python package in the sandbox",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "package": {
+            "description": "Package name to install",
+            "type": "string"
+          }
+        },
+        "required": [
+          "package"
+        ],
+        "title": "PackageParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "claude_code",
+      "description": "Execute a coding task using Claude Code CLI",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "task": {
+            "description": "The task to execute",
+            "type": "string"
+          },
+          "workdir": {
+            "description": "Optional working directory path",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "task"
+        ],
+        "title": "ClaudeCodeParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "save_to_local",
+      "description": "Save content to local file storage",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "content": {
+            "description": "Content to save",
+            "type": "string"
+          },
+          "filename": {
+            "description": "Filename",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "content",
+          "user_id"
+        ],
+        "title": "SaveFileParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "google_drive_download",
+      "description": "Download a file from Google Drive",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "file_id": {
+            "description": "File ID",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "file_id"
+        ],
+        "title": "DriveDownloadParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "list_local_files",
+      "description": "List files in local storage for a user",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "UserIdParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "ors_list_notes",
+      "description": "List ORS notes for a user",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "UserIdParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "ors_archive_note",
+      "description": "Archive an ORS note",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "note_id": {
+            "description": "Note ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "note_id"
+        ],
+        "title": "NoteIdParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "claude_code_status",
+      "description": "Check Claude Code availability and status",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "google_calendar_list_events",
+      "description": "List upcoming Google Calendar events",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "calendar_id": {
+            "description": "Calendar ID (default: primary)",
+            "nullable": true,
+            "type": "string"
+          },
+          "max_results": {
+            "description": "Maximum results",
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "CalendarListParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "google_sheets_write",
+      "description": "Write data to a Google Sheets range",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "range": {
+            "description": "Range in A1 notation",
+            "type": "string"
+          },
+          "spreadsheet_id": {
+            "description": "Spreadsheet ID",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          },
+          "values": {
+            "description": "Data as JSON array",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "spreadsheet_id",
+          "range",
+          "values"
+        ],
+        "title": "SheetsWriteParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sandbox_list_files",
+      "description": "List files in a sandbox directory",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "path": {
+            "description": "Directory path (optional)",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "title": "ListFilesParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "delete_local_file",
+      "description": "Delete a file from local storage",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "filename": {
+            "description": "Filename",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "user_id"
+        ],
+        "title": "LocalFileParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "google_drive_list",
+      "description": "List files in Google Drive",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "query": {
+            "description": "Search query (optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id"
+        ],
+        "title": "DriveListParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "claude_code_get_workdir",
+      "description": "Get the current working directory for Claude Code",
+      "inputSchema": {
+        "properties": {},
+        "type": "object"
+      }
+    },
+    {
+      "name": "run_shell",
+      "description": "Run a shell command in the sandbox",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "command": {
+            "description": "Shell command",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "ShellParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "download_from_sandbox",
+      "description": "Download a file from sandbox to local storage",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "local_filename": {
+            "description": "Local filename (optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "sandbox_path": {
+            "description": "Sandbox file path",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "sandbox_path",
+          "user_id"
+        ],
+        "title": "DownloadFromSandboxParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "execute_python",
+      "description": "Execute Python code in a sandboxed environment",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "code": {
+            "description": "Python code to execute",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code"
+        ],
+        "title": "CodeParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "read_local_file",
+      "description": "Read a file from local storage",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "filename": {
+            "description": "Filename",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "filename",
+          "user_id"
+        ],
+        "title": "LocalFileParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "claude_code_set_workdir",
+      "description": "Set the working directory for Claude Code",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "path": {
+            "description": "Path to the working directory",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "title": "WorkdirParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "sandbox_write_file",
+      "description": "Write content to a file in the sandbox",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "content": {
+            "description": "Content to write",
+            "type": "string"
+          },
+          "path": {
+            "description": "File path",
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "content"
+        ],
+        "title": "WriteFileParams",
+        "type": "object"
+      }
+    },
+    {
+      "name": "google_calendar_create_event",
+      "description": "Create a Google Calendar event",
+      "inputSchema": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "properties": {
+          "description": {
+            "description": "Description (optional)",
+            "nullable": true,
+            "type": "string"
+          },
+          "end_time": {
+            "description": "End time (ISO 8601)",
+            "type": "string"
+          },
+          "start_time": {
+            "description": "Start time (ISO 8601)",
+            "type": "string"
+          },
+          "title": {
+            "description": "Event title",
+            "type": "string"
+          },
+          "user_id": {
+            "description": "User ID",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user_id",
+          "title",
+          "start_time",
+          "end_time"
+        ],
+        "title": "CalendarCreateParams",
+        "type": "object"
+      }
+    }
+  ],
+  "installed_by": null,
+  "created_at": "2026-01-22T03:32:48.749458+00:00",
+  "updated_at": "2026-01-22T03:32:48.811504+00:00"
+}

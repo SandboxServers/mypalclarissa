@@ -1,4 +1,4 @@
-# Discord Bot Dockerfile for MyPalClara
+# Discord Bot Dockerfile for MyPalClarissa
 # For local development with docker-compose
 
 # Stage 1: Build Rust MCP server
@@ -13,7 +13,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Rust project
-COPY clara-mcp-server/ ./
+COPY clarissa-mcp-server/ ./
 
 # Build release binary
 RUN cargo build --release
@@ -35,7 +35,7 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy MCP server binary from builder
-COPY --from=mcp-builder /build/target/release/clara-mcp-server /usr/local/bin/clara-mcp-server
+COPY --from=mcp-builder /build/target/release/clarissa-mcp-server /usr/local/bin/clarissa-mcp-server
 
 # Install Poetry
 RUN pip install poetry
@@ -67,9 +67,9 @@ COPY scripts/ ./scripts/
 COPY VERSION ./
 
 # Create directories for persistent data
-RUN mkdir -p /data /app/clara_files /app/mcp_servers
+RUN mkdir -p /data /app/clarissa_files /app/mcp_servers
 ENV DATA_DIR=/data
-ENV CLARA_FILES_DIR=/app/clara_files
+ENV CLARISSA_FILES_DIR=/app/clarissa_files
 ENV MCP_SERVERS_DIR=/app/mcp_servers
 
 # Expose monitor dashboard port

@@ -24,20 +24,20 @@ from clarissa_core import make_llm
 from config.bot import BOT_NAME
 
 # Email configuration - loaded from environment or hardcoded for now
-EMAIL_ADDRESS = os.environ.get("CLARA_EMAIL_ADDRESS")
-EMAIL_PASSWORD = os.environ.get("CLARA_EMAIL_PASSWORD")
-IMAP_SERVER = os.getenv("CLARA_IMAP_SERVER", "imap.titan.email")
-IMAP_PORT = int(os.getenv("CLARA_IMAP_PORT", "993"))
+EMAIL_ADDRESS = os.environ.get("CLARISSA_EMAIL_ADDRESS")
+EMAIL_PASSWORD = os.environ.get("CLARISSA_EMAIL_PASSWORD")
+IMAP_SERVER = os.getenv("CLARISSA_IMAP_SERVER", "imap.titan.email")
+IMAP_PORT = int(os.getenv("CLARISSA_IMAP_PORT", "993"))
 
 # Discord user ID to notify (default: None if not set)
-_notify_user_env = os.getenv("CLARA_EMAIL_NOTIFY_USER", "").strip()
+_notify_user_env = os.getenv("CLARISSA_EMAIL_NOTIFY_USER", "").strip()
 NOTIFY_USER_ID = int(_notify_user_env) if _notify_user_env else None
 
 # Whether to send Discord notifications (default: off)
-NOTIFY_ENABLED = os.getenv("CLARA_EMAIL_NOTIFY", "false").lower() == "true"
+NOTIFY_ENABLED = os.getenv("CLARISSA_EMAIL_NOTIFY", "false").lower() == "true"
 
 # Check interval in seconds
-CHECK_INTERVAL = int(os.getenv("CLARA_EMAIL_CHECK_INTERVAL", "60"))
+CHECK_INTERVAL = int(os.getenv("CLARISSA_EMAIL_CHECK_INTERVAL", "60"))
 
 
 @dataclass
@@ -482,7 +482,7 @@ If you do respond, write as {BOT_NAME} - be helpful, friendly, and concise. Sign
 
 
 # SMTP timeout in seconds (prevents blocking the event loop indefinitely)
-SMTP_TIMEOUT = int(os.getenv("CLARA_SMTP_TIMEOUT", "30"))
+SMTP_TIMEOUT = int(os.getenv("CLARISSA_SMTP_TIMEOUT", "30"))
 
 
 def _send_email_sync(
@@ -500,8 +500,8 @@ def _send_email_sync(
         Tuple of (success, message)
     """
     try:
-        smtp_server = os.getenv("CLARA_SMTP_SERVER", "smtp.titan.email")
-        smtp_port = int(os.getenv("CLARA_SMTP_PORT", "465"))
+        smtp_server = os.getenv("CLARISSA_SMTP_SERVER", "smtp.titan.email")
+        smtp_port = int(os.getenv("CLARISSA_SMTP_PORT", "465"))
 
         # Add Re: prefix if not already there and this is a reply
         if is_reply and not subject.lower().startswith("re:"):
@@ -620,7 +620,7 @@ EMAIL_TOOLS = [
 async def handle_email_tool(tool_name: str, arguments: dict) -> str:
     """Handle email tool calls."""
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
-        return "Error: Email not configured. CLARA_EMAIL_ADDRESS and CLARA_EMAIL_PASSWORD must be set."
+        return "Error: Email not configured. CLARISSA_EMAIL_ADDRESS and CLARISSA_EMAIL_PASSWORD must be set."
 
     monitor = get_email_monitor()
 
@@ -662,8 +662,8 @@ async def handle_email_tool(tool_name: str, arguments: dict) -> str:
         
         try:
             # SMTP settings for Titan
-            smtp_server = os.getenv("CLARA_SMTP_SERVER", "smtp.titan.email")
-            smtp_port = int(os.getenv("CLARA_SMTP_PORT", "465"))
+            smtp_server = os.getenv("CLARISSA_SMTP_SERVER", "smtp.titan.email")
+            smtp_port = int(os.getenv("CLARISSA_SMTP_PORT", "465"))
             
             msg = MIMEMultipart()
             msg["From"] = EMAIL_ADDRESS
@@ -698,7 +698,7 @@ async def email_check_loop(bot):
     await bot.wait_until_ready()
 
     if not EMAIL_ADDRESS or not EMAIL_PASSWORD:
-        print("[email] Email monitoring DISABLED - CLARA_EMAIL_ADDRESS or CLARA_EMAIL_PASSWORD not set")
+        print("[email] Email monitoring DISABLED - CLARISSA_EMAIL_ADDRESS or CLARISSA_EMAIL_PASSWORD not set")
         return
 
     monitor = get_email_monitor()
@@ -707,7 +707,7 @@ async def email_check_loop(bot):
     if NOTIFY_ENABLED:
         print(f"[email] Discord notifications ON - will notify user ID {NOTIFY_USER_ID}")
     else:
-        print("[email] Discord notifications OFF (set CLARA_EMAIL_NOTIFY=true to enable)")
+        print("[email] Discord notifications OFF (set CLARISSA_EMAIL_NOTIFY=true to enable)")
 
     while not bot.is_closed():
         try:

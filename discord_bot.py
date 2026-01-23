@@ -84,7 +84,7 @@ from config.logging import (
 )
 from db import SessionLocal
 from db.channel_config import (
-    CLARA_ADMIN_ROLE,
+    CLARISSA_ADMIN_ROLE,
     get_channel_mode,
     get_guild_channels,
     is_ors_enabled,
@@ -389,7 +389,7 @@ def get_all_tools(include_docker: bool = True) -> list[dict]:
         capabilities["google_oauth"] = True
 
     # Email - check if credentials are configured
-    if os.getenv("CLARA_EMAIL_ADDRESS") and os.getenv("CLARA_EMAIL_PASSWORD"):
+    if os.getenv("CLARISSA_EMAIL_ADDRESS") and os.getenv("CLARISSA_EMAIL_PASSWORD"):
         capabilities["email"] = True
 
     # Get native tools from registry
@@ -611,7 +611,7 @@ def has_clara_admin_permission(member: discord.Member) -> bool:
     """Check if a member has Clara-Admin permissions.
 
     Returns True if member:
-    - Has a role matching CLARA_ADMIN_ROLE name
+    - Has a role matching CLARISSA_ADMIN_ROLE name
     - Has administrator permission
     - Has manage_channels permission
     """
@@ -620,7 +620,7 @@ def has_clara_admin_permission(member: discord.Member) -> bool:
     if member.guild_permissions.manage_channels:
         return True
     for role in member.roles:
-        if role.name == CLARA_ADMIN_ROLE:
+        if role.name == CLARISSA_ADMIN_ROLE:
             return True
     return False
 
@@ -648,7 +648,7 @@ async def handle_channel_command(message: DiscordMessage) -> bool:
 
     if not has_clara_admin_permission(message.author):
         await message.reply(
-            f"You need the **{CLARA_ADMIN_ROLE}** role or admin permissions to configure channels.",
+            f"You need the **{CLARISSA_ADMIN_ROLE}** role or admin permissions to configure channels.",
             mention_author=False,
         )
         return True
@@ -3481,7 +3481,7 @@ def get_version():
 
     return {
         "version": __version__,
-        "platform": "mypalclara",
+        "platform": "mypalclarissa",
         "component": "discord-bot",
     }
 

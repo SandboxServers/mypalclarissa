@@ -1,8 +1,9 @@
 [tool.poetry]
 name = "mypalclarissa"
-version = "0.1.0"
+version = "0.6.9"
 description = "MyPalClarissa - AI assistant with session management and memory"
-authors = ["Your Name <you@example.com>"]
+authors = ["Joshua Heidorn <heidornj@icloud.com>"]
+license = "PolyForm-Noncommercial-1.0.0"
 readme = "README.md"
 package-mode = false
 
@@ -16,9 +17,14 @@ uvicorn = {extras = ["standard"], version = "^0.38.0"}
 # Database
 sqlalchemy = "^2.0"
 
-# Memory system (OSS) with graph support
-mem0ai = {extras = ["graph"], version = "^1.0.1"}
+# Memory system - using vendored mem0 with fixes (vendor/mem0)
+# Dependencies needed by the vendored mem0:
+pydantic = "^2.0"  # Config validation
+qdrant-client = "^1.7.0"  # Vector store for local dev
 neo4j = "^5.0"  # Graph database driver
+kuzu = "^0.9.0"  # Embedded graph database (optional)
+posthog = "^3.0.0"  # Telemetry
+pytz = "^2024.1"  # Timezone handling
 
 # PostgreSQL support
 psycopg2-binary = "^2.9.9"  # PostgreSQL driver
@@ -34,9 +40,11 @@ requests = "^2.32.5"
 python-dotenv = "^1.0.1"
 imessage-reader = "^0.6.1"
 httpx = "^0.28.0"  # Async HTTP client for web search
+vaderSentiment = "^3.3.2"  # Sentiment analysis for emotional continuity
+pillow = "^11.0.0"  # Image processing for vision resizing
 
 # Discord bot
-"discord.py" = "^2.4.0"
+py-cord = "^2.6.1"
 
 # Docker code execution sandbox
 docker = "^7.0.0"
@@ -46,10 +54,17 @@ boto3 = "^1.35.0"
 
 # Tool system
 watchdog = "^4.0.0"  # File watching for hot-reload
-mcp = "^1.0.0"  # Model Context Protocol server
 
 # Browser automation
 playwright = "^1.49.0"
+
+# Claude Code agent SDK
+claude-agent-sdk = "^0.1.18"
+imap-tools = "^1.11.0"
+
+# MCP (Model Context Protocol) plugin system
+mcp = "^1.0.0"  # Official MCP Python SDK
+gitpython = "^3.1.0"  # For cloning GitHub repos
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"
@@ -60,8 +75,25 @@ requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.ruff]
-line-length = 88
+line-length = 120
 target-version = "py311"
+exclude = [
+    "vendor",
+    ".venv",
+    "__pycache__",
+]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP"]
+select = ["E", "F", "I"]
+ignore = [
+    "E501",   # Line too long - handled by formatter
+    "E402",   # Module level import not at top of file
+    "E741",   # Ambiguous variable name
+    "F401",   # Imported but unused - sometimes intentional re-exports
+    "F841",   # Local variable assigned but never used
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]
+"tools/*.py" = ["E501"]
+"sandbox/*.py" = ["E501"]

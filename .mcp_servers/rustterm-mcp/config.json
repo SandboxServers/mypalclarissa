@@ -1,0 +1,23 @@
+{
+  "name": "rustterm-mcp",
+  "source_type": "github",
+  "id": "rustterm-mcp-001",
+  "display_name": "RustTerm MCP Server",
+  "source_url": "https://github.com/BangRocket/rustterm-mcp",
+  "transport": "stdio",
+  "command": "/Users/heidornj/Code/rustterm-mcp/target/release/rustterm-mcp",
+  "args": [],
+  "cwd": null,
+  "env": {},
+  "endpoint_url": null,
+  "docker_config": {},
+  "enabled": true,
+  "status": "stopped",
+  "last_error": null,
+  "last_error_at": null,
+  "tool_count": 0,
+  "tools": [],
+  "installed_by": null,
+  "created_at": "2026-01-22T04:35:00.000000+00:00",
+  "updated_at": "2026-01-22T04:35:00.000000+00:00"
+}

@@ -16,8 +16,8 @@ Prerequisites:
 
 Usage:
     # Set environment variables first
-    export DATABASE_URL=postgresql://user:pass@host:5432/clara_main
-    export MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clara_vectors
+    export DATABASE_URL=postgresql://user:pass@host:5432/clarissa_main
+    export MEM0_DATABASE_URL=postgresql://user:pass@host:5432/clarissa_vectors
 
     # Run migration
     poetry run python scripts/migrate_to_postgres.py --sqlite

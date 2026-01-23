@@ -36,6 +36,11 @@ else:
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
+def get_session():
+    """Get a database session context manager."""
+    return SessionLocal()
+
+
 def init_db() -> None:
     from db.models import Base
     Base.metadata.create_all(bind=engine)

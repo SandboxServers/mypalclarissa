@@ -6,10 +6,91 @@ methods for tool discovery, filtering, and execution.
 
 from __future__ import annotations
 
+import json
 import traceback
 from typing import Any, ClassVar
 
 from ._base import ToolContext, ToolDef
+
+
+def validate_tool_args(
+    tool_name: str,
+    args: dict[str, Any],
+    parameters: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate and coerce tool arguments against JSON schema.
+
+    Handles common issues like:
+    - String-to-array coercion (when LLM passes "item" instead of ["item"])
+    - String-to-integer coercion
+    - String-to-boolean coercion
+    - Missing required parameters
+
+    Args:
+        tool_name: Name of the tool (for error messages)
+        args: Arguments to validate
+        parameters: JSON Schema for the tool's parameters
+
+    Returns:
+        (validated_args, warnings) - Coerced arguments and list of any issues
+    """
+    validated: dict[str, Any] = {}
+    warnings: list[str] = []
+
+    props = parameters.get("properties", {})
+    required = set(parameters.get("required", []))
+
+    # Check required params
+    for req in required:
+        if req not in args:
+            warnings.append(f"Missing required parameter: {req}")
+
+    # Validate and coerce each argument
+    for name, value in args.items():
+        if name not in props:
+            # Unknown param - pass through but warn
+            warnings.append(f"Unknown parameter: {name}")
+            validated[name] = value
+            continue
+
+        prop_def = props[name]
+        expected_type = prop_def.get("type")
+
+        # Type coercion
+        if expected_type == "array" and isinstance(value, str):
+            # Try to parse as JSON array, or wrap single value
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    validated[name] = parsed
+                else:
+                    validated[name] = [value]
+                    warnings.append(f"Wrapped string as array for {name}")
+            except json.JSONDecodeError:
+                validated[name] = [value]
+                warnings.append(f"Wrapped string as array for {name}")
+
+        elif expected_type == "integer" and isinstance(value, str):
+            try:
+                validated[name] = int(value)
+            except ValueError:
+                validated[name] = value
+                warnings.append(f"Failed to coerce {name} to integer")
+
+        elif expected_type == "number" and isinstance(value, str):
+            try:
+                validated[name] = float(value)
+            except ValueError:
+                validated[name] = value
+                warnings.append(f"Failed to coerce {name} to number")
+
+        elif expected_type == "boolean" and isinstance(value, str):
+            validated[name] = value.lower() in ("true", "1", "yes")
+
+        else:
+            validated[name] = value
+
+    return validated, warnings
 
 
 class ToolRegistry:
@@ -216,18 +297,35 @@ class ToolRegistry:
             return True
         return False
 
-    def get_system_prompts(self, platform: str | None = None) -> str:
-        """Get all system prompts concatenated.
+    def get_system_prompts(
+        self,
+        platform: str | None = None,
+        allowed_modules: list[str] | None = None,
+    ) -> str:
+        """Get system prompts concatenated, optionally filtered by module.
 
         Args:
             platform: Optional platform filter (not currently used but reserved)
+            allowed_modules: If provided, only include prompts from these modules.
+                            If None, includes all prompts (legacy behavior).
 
         Returns:
-            All system prompts joined with newlines
+            Filtered system prompts joined with newlines
         """
         if not self._system_prompts:
             return ""
-        return "\n\n".join(self._system_prompts.values())
+
+        if allowed_modules is not None:
+            allowed_set = set(allowed_modules)
+            prompts = [
+                prompt
+                for module, prompt in self._system_prompts.items()
+                if module in allowed_set
+            ]
+        else:
+            prompts = list(self._system_prompts.values())
+
+        return "\n\n".join(prompts)
 
     def __len__(self) -> int:
         """Return the number of registered tools."""

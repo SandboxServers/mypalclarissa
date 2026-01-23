@@ -45,15 +45,22 @@ class ToolLoader:
         loader.start_watching()  # Enable hot-reload
     """
 
-    def __init__(self, tools_dir: Path, registry: ToolRegistry) -> None:
+    def __init__(
+        self,
+        tools_dir: Path,
+        registry: ToolRegistry,
+        skip_modules: list[str] | None = None,
+    ) -> None:
         """Initialize the loader.
 
         Args:
             tools_dir: Path to the tools/ directory
             registry: ToolRegistry instance to register tools with
+            skip_modules: List of module names to skip loading (e.g., replaced by MCP)
         """
         self.tools_dir = tools_dir
         self.registry = registry
+        self.skip_modules = set(skip_modules or [])
         self._modules: dict[str, ModuleType] = {}
         self._module_versions: dict[str, str] = {}
         self._module_mtimes: dict[str, float] = {}
@@ -69,7 +76,7 @@ class ToolLoader:
             List of module names (without .py extension for files)
         """
         modules = []
-        
+
         # Discover single-file modules (tools/*.py)
         for f in self.tools_dir.glob("*.py"):
             # Skip private modules (starting with _)
@@ -77,6 +84,10 @@ class ToolLoader:
                 continue
             # Skip __pycache__ etc
             if f.name.startswith("__"):
+                continue
+            # Skip modules replaced by MCP servers
+            if f.stem in self.skip_modules:
+                print(f"[tools] Skipping {f.stem} (replaced by MCP server)")
                 continue
             modules.append(f.stem)
         
@@ -89,6 +100,10 @@ class ToolLoader:
                 continue
             # Skip __pycache__
             if d.name == "__pycache__":
+                continue
+            # Skip modules replaced by MCP servers
+            if d.name in self.skip_modules:
+                print(f"[tools] Skipping {d.name} (replaced by MCP server)")
                 continue
             # Check for __init__.py
             init_file = d / "__init__.py"
